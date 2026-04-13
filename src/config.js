@@ -8,7 +8,7 @@ const CONFIG_PATH = path.join(CONFIG_DIR, 'config.json');
 const DEFAULT_CONFIG = {
   device_id: '',
   serial_number: '',
-  mqtt_endpoint: '',
+  mqtt_endpoint: 'a2hqnbt5x2s8et-ats.iot.us-east-1.amazonaws.com',
   channels: [],
   health_interval_ms: 60000,
   update_check_interval_ms: 6 * 60 * 60 * 1000,
