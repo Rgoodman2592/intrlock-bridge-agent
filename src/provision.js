@@ -1,8 +1,9 @@
 const fs = require('fs');
 const path = require('path');
-const crypto = require('crypto');
+const https = require('https');
 const config = require('./config');
 
+const BRIDGE_API = 'https://ovle12ewnh.execute-api.us-east-1.amazonaws.com';
 const CERTS_DIR = path.join(config.CONFIG_DIR, 'certs');
 
 function certsExist() {
@@ -10,106 +11,63 @@ function certsExist() {
          fs.existsSync(path.join(CERTS_DIR, 'device.key'));
 }
 
-function generateKeyPair() {
-  console.log('[PROVISION] Generating RSA 2048 key pair...');
-  const { publicKey, privateKey } = crypto.generateKeyPairSync('rsa', {
-    modulusLength: 2048,
-    publicKeyEncoding: { type: 'spki', format: 'pem' },
-    privateKeyEncoding: { type: 'pkcs8', format: 'pem' },
+function httpPost(url, data) {
+  return new Promise((resolve, reject) => {
+    const body = JSON.stringify(data);
+    const parsed = new URL(url);
+    const req = https.request({
+      hostname: parsed.hostname,
+      path: parsed.pathname,
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) },
+    }, (res) => {
+      let result = '';
+      res.on('data', (chunk) => result += chunk);
+      res.on('end', () => {
+        try { resolve(JSON.parse(result)); } catch { resolve({ raw: result }); }
+      });
+    });
+    req.on('error', reject);
+    req.write(body);
+    req.end();
   });
-
-  fs.mkdirSync(CERTS_DIR, { recursive: true });
-  fs.writeFileSync(path.join(CERTS_DIR, 'device.key'), privateKey);
-  fs.writeFileSync(path.join(CERTS_DIR, 'device.pub'), publicKey);
-  console.log('[PROVISION] Key pair generated');
-  return { publicKey, privateKey };
 }
 
 async function provision(cfg) {
-  if (certsExist()) {
-    console.log('[PROVISION] Device already provisioned');
-    return true;
-  }
-
-  console.log('[PROVISION] Starting fleet provisioning...');
+  console.log('[PROVISION] Starting self-registration...');
   console.log(`[PROVISION] Serial: ${cfg.serial_number}`);
   console.log(`[PROVISION] Device ID: ${cfg.device_id}`);
 
-  const claimCertPath = path.join(CERTS_DIR, 'claim.crt');
-  const claimKeyPath = path.join(CERTS_DIR, 'claim.key');
-
-  if (!fs.existsSync(claimCertPath) || !fs.existsSync(claimKeyPath)) {
-    console.log('[PROVISION] No claim certificate found — device needs manual provisioning');
-    console.log('[PROVISION] Place claim.crt and claim.key in', CERTS_DIR);
-    console.log('[PROVISION] Running in offline/test mode until provisioned');
-    return false;
-  }
-
+  // Register with the Bridge API (creates record in Xano if not exists)
   try {
-    generateKeyPair();
-
-    // Fleet provisioning happens via MQTT using the claim cert
-    // The full implementation requires connecting with claim cert,
-    // publishing to $aws/provisioning-templates/intrlock-bridge-provision/provision/json
-    // and receiving the signed device cert in response
-    const { mqtt, iot } = require('aws-iot-device-sdk-v2');
-
-    const caPath = path.join(CERTS_DIR, 'AmazonRootCA1.pem');
-    const configBuilder = iot.AwsIotMqttConnectionConfigBuilder
-      .new_mtls_builder(claimCertPath, claimKeyPath)
-      .with_certificate_authority(caPath)
-      .with_endpoint(cfg.mqtt_endpoint)
-      .with_client_id(`provision-${cfg.device_id}`)
-      .with_clean_session(true);
-
-    const mqttConfig = configBuilder.build();
-    const client = new mqtt.MqttClient();
-    const connection = client.new_connection(mqttConfig);
-
-    await connection.connect();
-    console.log('[PROVISION] Connected with claim cert');
-
-    // Subscribe to provisioning response topics
-    const responseTopic = `$aws/provisioning-templates/intrlock-bridge-provision/provision/json/accepted`;
-    const rejectTopic = `$aws/provisioning-templates/intrlock-bridge-provision/provision/json/rejected`;
-
-    const result = await new Promise((resolve, reject) => {
-      connection.subscribe(responseTopic, mqtt.QoS.AtLeastOnce);
-      connection.subscribe(rejectTopic, mqtt.QoS.AtLeastOnce);
-
-      connection.on('message', (topic, payload) => {
-        const data = JSON.parse(payload.toString());
-        if (topic.includes('accepted')) resolve(data);
-        else reject(new Error(data.errorMessage || 'Provisioning rejected'));
-      });
-
-      // Publish provisioning request
-      connection.publish(
-        `$aws/provisioning-templates/intrlock-bridge-provision/provision/json`,
-        JSON.stringify({
-          serialNumber: cfg.serial_number,
-          deviceId: cfg.device_id,
-        }),
-        mqtt.QoS.AtLeastOnce,
-      );
-
-      setTimeout(() => reject(new Error('Provisioning timeout')), 30000);
+    const result = await httpPost(`${BRIDGE_API}/bridge/register`, {
+      serial_number: cfg.serial_number,
+      bridge_device_id: cfg.device_id,
+      firmware_version: require('../package.json').version,
+      channel_count: cfg.channels ? cfg.channels.length : 0,
     });
+    console.log('[PROVISION] Registration result:', JSON.stringify(result));
 
-    // Save returned device certificate
-    if (result.deviceCertificate) {
-      fs.writeFileSync(path.join(CERTS_DIR, 'device.crt'), result.deviceCertificate);
-      console.log('[PROVISION] Device certificate saved');
+    if (result.error && !result.error.includes('already')) {
+      console.log('[PROVISION] Registration note:', result.error);
     }
-
-    await connection.disconnect();
-    console.log('[PROVISION] Provisioning complete');
-    return true;
   } catch (e) {
-    console.error('[PROVISION] Failed:', e.message);
-    console.log('[PROVISION] Running in offline/test mode');
-    return false;
+    console.error('[PROVISION] API registration failed:', e.message);
+    console.log('[PROVISION] Device will register when cloud connection is available');
   }
+
+  // IoT Core MQTT certs — skip if no claim cert (will connect via API polling instead)
+  if (!certsExist()) {
+    const claimCertPath = path.join(CERTS_DIR, 'claim.crt');
+    if (!fs.existsSync(claimCertPath)) {
+      console.log('[PROVISION] No IoT Core claim certificate — running in API-only mode');
+      console.log('[PROVISION] MQTT will be available once fleet provisioning certs are deployed');
+      return false;
+    }
+  }
+
+  console.log('[PROVISION] Device certificates found — MQTT ready');
+  return true;
 }
 
 module.exports = { provision, certsExist, CERTS_DIR };
