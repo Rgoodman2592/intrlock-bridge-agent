@@ -1,0 +1,20 @@
+[Unit]
+Description=Intrlock Bridge Agent
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/intrlock-bridge
+ExecStart=/usr/bin/node /opt/intrlock-bridge/src/index.js
+Restart=always
+RestartSec=10
+Environment=NODE_ENV=production
+Environment=BRIDGE_DIR=/opt/intrlock-bridge
+StandardOutput=journal
+StandardError=journal
+WatchdogSec=120
+
+[Install]
+WantedBy=multi-user.target
