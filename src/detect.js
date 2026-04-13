@@ -45,9 +45,9 @@ function detectGpioPins() {
     }
   }
 
-  // Fallback to default pattern
-  console.log('[DETECT] Using default pin pattern: 17, 27, 22, 23');
-  return { pins: [17, 27, 22, 23], simulated: false };
+  // Fallback to MC350892 stackable (confirmed working)
+  console.log('[DETECT] Using default pin pattern: 4, 22, 6, 26 (MC350892)');
+  return { pins: [4, 22, 6, 26], simulated: false };
 }
 
 // Known board configs: pins -> active_high setting

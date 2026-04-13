@@ -50,16 +50,16 @@ class GpioManager {
       const ctrlFile = `/tmp/intrlock_gpio_${pin}`;
       if (on) {
         // Start a background python process that holds the pin
-        execSync(`python3 -c "import gpiozero,time,signal;r=gpiozero.OutputDevice(${pin},active_high=${activeHigh ? 'True' : 'False'});r.on();open('${ctrlFile}','w').write(str(r.pin));signal.pause()" &`,
+        execSync(`sudo python3 -c "import gpiozero,time,signal;r=gpiozero.OutputDevice(${pin},active_high=${activeHigh ? 'True' : 'False'});r.on();open('${ctrlFile}','w').write(str(r.pin));signal.pause()" &`,
           { shell: '/bin/bash', stdio: 'ignore', timeout: 3000 });
       } else {
         // Kill the background process holding this pin
         try {
-          execSync(`pkill -f "intrlock_gpio_${pin}" 2>/dev/null; rm -f ${ctrlFile}`, { shell: '/bin/bash', stdio: 'ignore', timeout: 2000 });
+          execSync(`sudo pkill -f "intrlock_gpio_${pin}" 2>/dev/null; rm -f ${ctrlFile}`, { shell: '/bin/bash', stdio: 'ignore', timeout: 2000 });
         } catch {}
         // Explicitly set pin off
         try {
-          execSync(`python3 -c "import gpiozero;r=gpiozero.OutputDevice(${pin},active_high=${activeHigh ? 'True' : 'False'});r.off();r.close()"`,
+          execSync(`sudo python3 -c "import gpiozero;r=gpiozero.OutputDevice(${pin},active_high=${activeHigh ? 'True' : 'False'});r.off();r.close()"`,
             { stdio: 'ignore', timeout: 3000 });
         } catch {}
       }
