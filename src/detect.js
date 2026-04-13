@@ -1,10 +1,12 @@
 const fs = require('fs');
 
 // Common relay board GPIO pin patterns
+// Try 8-channel patterns first, then fall back to 4-channel
 const PIN_PATTERNS = [
-  [17, 27, 22, 23],  // Inland 350892 / most 4-channel boards
-  [5, 6, 13, 19],    // Alternative pattern
-  [4, 17, 27, 22],   // Another common layout
+  [17, 27, 22, 23, 5, 6, 13, 19],  // Inland MC509703 8-channel
+  [17, 27, 22, 23],                  // Inland 350892 4-channel
+  [5, 6, 13, 19],                    // Alternative 4-channel
+  [4, 17, 27, 22],                   // Another 4-channel layout
 ];
 
 function isRaspberryPi() {
