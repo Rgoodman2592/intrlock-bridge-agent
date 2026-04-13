@@ -1,0 +1,16 @@
+[Unit]
+Description=Intrlock Bridge First Boot Auto-Provisioner
+After=network-online.target
+Wants=network-online.target
+ConditionPathExists=!/opt/intrlock-bridge/.first-boot-done
+
+[Service]
+Type=oneshot
+ExecStart=/boot/firmware/intrlock-first-boot.sh
+RemainAfterExit=yes
+StandardOutput=journal+console
+StandardError=journal+console
+TimeoutStartSec=600
+
+[Install]
+WantedBy=multi-user.target
