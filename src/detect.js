@@ -3,10 +3,10 @@ const fs = require('fs');
 // Common relay board GPIO pin patterns
 // Try 8-channel patterns first, then fall back to 4-channel
 const PIN_PATTERNS = [
-  [17, 27, 22, 23, 5, 6, 13, 19],  // Inland MC509703 8-channel
-  [17, 27, 22, 23],                  // Inland 350892 4-channel
+  [17, 27, 22, 23, 5, 6, 13, 19],  // Inland MC509703 8-channel (active-low)
+  [4, 22, 6, 26],                    // Inland MC350892 4-channel stackable (active-high)
+  [17, 27, 22, 23],                  // Generic 4-channel (active-low)
   [5, 6, 13, 19],                    // Alternative 4-channel
-  [4, 17, 27, 22],                   // Another 4-channel layout
 ];
 
 function isRaspberryPi() {
@@ -50,14 +50,26 @@ function detectGpioPins() {
   return { pins: [17, 27, 22, 23], simulated: false };
 }
 
+// Known board configs: pins -> active_high setting
+const BOARD_CONFIGS = {
+  '4,22,6,26': { active_high: true, name: 'Inland MC350892 Stackable' },
+  '17,27,22,23,5,6,13,19': { active_high: false, name: 'Inland MC509703 8-Channel' },
+  '17,27,22,23': { active_high: false, name: 'Generic 4-Channel' },
+};
+
 function buildChannelConfig(pins, simulated) {
+  const key = pins.join(',');
+  const board = BOARD_CONFIGS[key] || { active_high: true, name: 'Unknown Board' };
+  console.log(`[DETECT] Board: ${board.name} (active_high=${board.active_high})`);
+  const relayNames = { 0: 'J2', 1: 'J3', 2: 'J4', 3: 'J5', 4: 'J6', 5: 'J7', 6: 'J8', 7: 'J9' };
   return pins.map((pin, i) => ({
     channel: i + 1,
     gpio_pin: pin,
-    name: `Channel ${i + 1}`,
+    name: relayNames[i] || `Channel ${i + 1}`,
     type: 'door_strike',
     mode: 'momentary',
     pulse_duration_ms: 5000,
+    active_high: board.active_high,
     enabled: true,
     sensor_gpio_pin: null,
     tamper_gpio_pin: null,

@@ -1,56 +1,70 @@
 const { execSync } = require('child_process');
 const fs = require('fs');
 
-// Pi 5 uses /dev/gpiochip4 (RP1), older Pis use /dev/gpiochip0
-function findGpioChip() {
-  if (fs.existsSync('/dev/gpiochip4')) return '4'; // Pi 5
-  if (fs.existsSync('/dev/gpiochip0')) return '0'; // Pi 4/3/2
-  return null;
+function isRaspberryPi() {
+  try {
+    return fs.existsSync('/dev/gpiochip0') || fs.existsSync('/dev/gpiochip4');
+  } catch { return false; }
 }
 
 class GpioManager {
   constructor() {
-    this.chip = findGpioChip();
-    this.states = {};      // channel -> 'open'|'closed'
+    this.states = {};
     this.sensorStates = {};
     this.timers = {};
-    this.channelMap = {};  // channel -> gpio pin
+    this.channelMap = {};   // channel -> gpio pin
+    this.activeHigh = {};   // channel -> boolean
     this.simulated = false;
   }
 
   initChannels(channels) {
-    if (!this.chip) {
-      console.log('[GPIO] No GPIO chip found — running in simulated mode');
+    if (!isRaspberryPi()) {
+      console.log('[GPIO] No GPIO detected — running in simulated mode');
       this.simulated = true;
     }
 
     for (const ch of channels) {
       if (!ch.enabled) continue;
       this.channelMap[ch.channel] = ch.gpio_pin;
+      this.activeHigh[ch.channel] = ch.active_high !== false; // default active-high
       this.states[ch.channel] = 'closed';
 
+      // Ensure relay is OFF on init
       if (!this.simulated) {
-        // Set pin as output, HIGH (relay OFF — active-low)
-        try {
-          execSync(`gpioset --mode=signal ${this.chip} ${ch.gpio_pin}=1 &`, { stdio: 'ignore' });
-        } catch (e) {
-          console.error(`[GPIO] Pin ${ch.gpio_pin} init failed:`, e.message);
-        }
+        this._setPin(ch.gpio_pin, false, ch.active_high !== false);
       }
     }
-    console.log(`[GPIO] Initialized ${Object.keys(this.channelMap).length} channels${this.simulated ? ' (simulated)' : ` on gpiochip${this.chip}`}`);
+    console.log(`[GPIO] Initialized ${Object.keys(this.channelMap).length} channels${this.simulated ? ' (simulated)' : ''}`);
   }
 
-  _setPin(pin, value) {
+  _setPin(pin, on, activeHigh) {
     if (this.simulated) {
-      console.log(`[GPIO-SIM] Pin ${pin} = ${value === 0 ? 'ON' : 'OFF'}`);
+      console.log(`[GPIO-SIM] Pin ${pin} = ${on ? 'ON' : 'OFF'}`);
       return;
     }
     try {
-      // gpioset sets a pin value: 0 = LOW (relay ON), 1 = HIGH (relay OFF)
-      execSync(`gpioset ${this.chip} ${pin}=${value}`, { timeout: 2000 });
+      // Use gpiozero via python3 — most reliable on Pi 5
+      const value = (on && activeHigh) || (!on && !activeHigh) ? '1' : '0';
+      const pyCmd = `import gpiozero;r=gpiozero.OutputDevice(${pin},active_high=${activeHigh ? 'True' : 'False'},initial_value=False);r.value=${value};import time;time.sleep(0.05)`;
+      // Use a persistent approach — write a control file
+      const ctrlFile = `/tmp/intrlock_gpio_${pin}`;
+      if (on) {
+        // Start a background python process that holds the pin
+        execSync(`python3 -c "import gpiozero,time,signal;r=gpiozero.OutputDevice(${pin},active_high=${activeHigh ? 'True' : 'False'});r.on();open('${ctrlFile}','w').write(str(r.pin));signal.pause()" &`,
+          { shell: '/bin/bash', stdio: 'ignore', timeout: 3000 });
+      } else {
+        // Kill the background process holding this pin
+        try {
+          execSync(`pkill -f "intrlock_gpio_${pin}" 2>/dev/null; rm -f ${ctrlFile}`, { shell: '/bin/bash', stdio: 'ignore', timeout: 2000 });
+        } catch {}
+        // Explicitly set pin off
+        try {
+          execSync(`python3 -c "import gpiozero;r=gpiozero.OutputDevice(${pin},active_high=${activeHigh ? 'True' : 'False'});r.off();r.close()"`,
+            { stdio: 'ignore', timeout: 3000 });
+        } catch {}
+      }
     } catch (e) {
-      console.error(`[GPIO] Failed to set pin ${pin}:`, e.message);
+      console.error(`[GPIO] Pin ${pin} error:`, e.message);
     }
   }
 
@@ -60,18 +74,17 @@ class GpioManager {
 
     if (this.timers[channel]) clearTimeout(this.timers[channel]);
 
-    // Activate relay (active-low: 0 = ON)
-    this._setPin(pin, 0);
+    this._setPin(pin, true, this.activeHigh[channel]);
     this.states[channel] = 'open';
 
     this.timers[channel] = setTimeout(() => {
-      this._setPin(pin, 1);
+      this._setPin(pin, false, this.activeHigh[channel]);
       this.states[channel] = 'closed';
       delete this.timers[channel];
       console.log(`[GPIO] Channel ${channel} pulse complete (${durationMs}ms)`);
     }, durationMs);
 
-    console.log(`[GPIO] Channel ${channel} pulsed for ${durationMs}ms`);
+    console.log(`[GPIO] Channel ${channel} (pin ${pin}) pulsed for ${durationMs}ms`);
     return { channel, state: 'open', duration_ms: durationMs };
   }
 
@@ -81,13 +94,9 @@ class GpioManager {
 
     if (this.timers[channel]) { clearTimeout(this.timers[channel]); delete this.timers[channel]; }
 
-    if (state === 'open' || state === 'on') {
-      this._setPin(pin, 0);
-      this.states[channel] = 'open';
-    } else {
-      this._setPin(pin, 1);
-      this.states[channel] = 'closed';
-    }
+    const on = state === 'open' || state === 'on';
+    this._setPin(pin, on, this.activeHigh[channel]);
+    this.states[channel] = on ? 'open' : 'closed';
     console.log(`[GPIO] Channel ${channel} set to ${this.states[channel]}`);
     return { channel, state: this.states[channel] };
   }
@@ -101,15 +110,16 @@ class GpioManager {
   }
 
   onSensorChange(callback) {
-    // Sensor monitoring via gpiomon (future)
+    // Future: monitor sensor GPIO inputs
   }
 
   cleanup() {
     for (const timer of Object.values(this.timers)) clearTimeout(timer);
-    // Set all relays OFF
     for (const [ch, pin] of Object.entries(this.channelMap)) {
-      this._setPin(pin, 1);
+      this._setPin(pin, false, this.activeHigh[ch]);
     }
+    // Kill any lingering gpio processes
+    try { execSync('pkill -f intrlock_gpio_ 2>/dev/null', { shell: '/bin/bash', stdio: 'ignore' }); } catch {}
     console.log('[GPIO] Cleaned up');
   }
 }
