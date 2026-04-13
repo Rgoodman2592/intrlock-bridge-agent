@@ -6,6 +6,7 @@ const { MqttClient } = require('./mqtt');
 const { HealthReporter } = require('./health');
 const { provision } = require('./provision');
 const { startPeriodicCheck } = require('./updater');
+const { CommandPoller } = require('./poller');
 
 async function main() {
   console.log('===========================================');
@@ -106,6 +107,10 @@ async function main() {
     }
   });
 
+  // Start HTTP command polling (fallback when MQTT is unavailable)
+  const poller = new CommandPoller(cfg.device_id, gpio, mqtt);
+  poller.start(3000);
+
   // Start health reporting
   const health = new HealthReporter(mqtt, gpio, cfg);
   health.start();
@@ -118,6 +123,7 @@ async function main() {
   // Graceful shutdown
   const shutdown = async () => {
     console.log('[MAIN] Shutting down...');
+    poller.stop();
     health.stop();
     gpio.cleanup();
     await mqtt.disconnect();
