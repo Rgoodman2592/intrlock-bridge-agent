@@ -11,12 +11,23 @@ class CommandPoller {
   }
 
   start(intervalMs = 3000) {
-    // Only poll if MQTT is not connected
+    this.pollCount = 0;
     this.interval = setInterval(() => {
-      if (this.mqtt && this.mqtt.connected) return; // MQTT handles it
+      if (this.mqtt && this.mqtt.connected) return;
       this.poll();
     }, intervalMs);
     this.poll(); // immediate first poll
+    // Heartbeat every 60 seconds — update status to online + last_seen
+    this.heartbeatInterval = setInterval(() => {
+      this.sendHeartbeat();
+    }, 60000);
+    this.sendHeartbeat(); // immediate first heartbeat
+  }
+
+  async sendHeartbeat() {
+    try {
+      await this.httpPost(`${BRIDGE_API}/bridge/heartbeat`, { device_id: this.deviceId });
+    } catch {}
   }
 
   async poll() {
@@ -91,6 +102,7 @@ class CommandPoller {
 
   stop() {
     if (this.interval) { clearInterval(this.interval); this.interval = null; }
+    if (this.heartbeatInterval) { clearInterval(this.heartbeatInterval); this.heartbeatInterval = null; }
   }
 }
 
