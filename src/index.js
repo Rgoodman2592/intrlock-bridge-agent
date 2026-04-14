@@ -7,6 +7,7 @@ const { HealthReporter } = require('./health');
 const { provision } = require('./provision');
 const { startPeriodicCheck } = require('./updater');
 const { CommandPoller } = require('./poller');
+const { EinkDisplay } = require('./eink');
 
 async function main() {
   console.log('===========================================');
@@ -30,6 +31,10 @@ async function main() {
   // Initialize GPIO
   const gpio = new GpioManager();
   gpio.initChannels(cfg.channels);
+
+  // Initialize e-ink display (non-fatal — disabled automatically if hardware absent)
+  const eink = new EinkDisplay(cfg);
+  await eink.init();
 
   // Sensor change events
   gpio.onSensorChange((channel, state) => {
@@ -57,6 +62,37 @@ async function main() {
       const channelCfg = cfg.channels.find(c => c.channel === ch);
       const mode = data.mode || channelCfg?.mode || 'momentary';
       const duration = data.duration_ms || channelCfg?.pulse_duration_ms || 5000;
+
+      // E-ink display commands — handled before relay logic
+      if (data.action === 'show_qr') {
+        eink.showQR(data.url || '', data.text || '');
+        mqtt.publish('event', {
+          event_type: 'display_updated',
+          display_action: 'show_qr',
+          url: data.url,
+          timestamp: Date.now(),
+        });
+        return;
+      }
+      if (data.action === 'clear_display') {
+        eink.clear();
+        mqtt.publish('event', {
+          event_type: 'display_updated',
+          display_action: 'clear',
+          timestamp: Date.now(),
+        });
+        return;
+      }
+      if (data.action === 'show_status') {
+        eink.showStatus(data.text || '');
+        mqtt.publish('event', {
+          event_type: 'display_updated',
+          display_action: 'show_status',
+          text: data.text,
+          timestamp: Date.now(),
+        });
+        return;
+      }
 
       let result;
       if (data.action === 'pulse' || (data.action === 'unlock' && mode === 'momentary')) {

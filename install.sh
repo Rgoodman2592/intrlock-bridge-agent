@@ -19,6 +19,7 @@ fi
 # Step 1: Update system
 echo "[1/8] Updating system packages..."
 apt-get update -qq
+apt-get install -y -qq python3-pip python3-pil python3-spidev gpiod libgpiod-dev 2>/dev/null || true
 
 # Step 2: Install Node.js 20
 if ! command -v node &> /dev/null || [[ $(node -v | cut -d. -f1 | tr -d 'v') -lt $NODE_VERSION ]]; then
@@ -73,9 +74,25 @@ fi
 
 cd "$INSTALL_DIR"
 
-# Step 7: Install Node dependencies
+# Step 7: Install Node dependencies and Python e-ink libraries
 echo "[7/8] Installing dependencies..."
 npm install --production --quiet 2>/dev/null
+
+# Install Python libraries for e-ink display (--break-system-packages for Bookworm+)
+echo "  Installing Python e-ink libraries..."
+pip3 install qrcode pillow spidev --break-system-packages --quiet 2>/dev/null || \
+  pip3 install qrcode pillow spidev --quiet 2>/dev/null || true
+
+# Enable SPI interface (required for e-ink display)
+echo "  Enabling SPI interface..."
+raspi-config nonint do_spi 0 2>/dev/null || true
+# Also set via config.txt directly as a fallback
+if ! grep -q "^dtparam=spi=on" /boot/firmware/config.txt 2>/dev/null; then
+  echo "dtparam=spi=on" >> /boot/firmware/config.txt 2>/dev/null || true
+fi
+if ! grep -q "^dtparam=spi=on" /boot/config.txt 2>/dev/null; then
+  echo "dtparam=spi=on" >> /boot/config.txt 2>/dev/null || true
+fi
 
 # Download Amazon Root CA
 mkdir -p "$INSTALL_DIR/certs"
