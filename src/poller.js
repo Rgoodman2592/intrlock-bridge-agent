@@ -37,9 +37,10 @@ class CommandPoller {
   }
 
   executeCommand(cmd) {
+    const ch = cmd.channel || 1;
+    const duration = cmd.duration_ms || 5000;
+    let success = true;
     try {
-      const ch = cmd.channel || 1;
-      const duration = cmd.duration_ms || 5000;
       if (cmd.action === 'pulse' || cmd.action === 'unlock') {
         this.gpio.pulse(ch, duration);
       } else if (cmd.action === 'on' || cmd.action === 'open') {
@@ -50,7 +51,13 @@ class CommandPoller {
       console.log(`[POLLER] Executed: ${cmd.action} ch${ch}`);
     } catch (e) {
       console.error('[POLLER] Command error:', e.message);
+      success = false;
     }
+    // Acknowledge execution to cloud for audit logging
+    this.httpPost(`${BRIDGE_API}/bridge/ack`, {
+      device_id: this.deviceId, action: cmd.action, channel: ch,
+      duration_ms: duration, success,
+    }).catch(() => {});
   }
 
   httpGet(url) {
@@ -62,6 +69,23 @@ class CommandPoller {
           try { resolve(JSON.parse(data)); } catch { resolve(null); }
         });
       }).on('error', reject);
+    });
+  }
+
+  httpPost(url, body) {
+    return new Promise((resolve, reject) => {
+      const data = JSON.stringify(body);
+      const parsed = new URL(url);
+      const req = https.request({ hostname: parsed.hostname, path: parsed.pathname, method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(data) },
+      }, (res) => {
+        let result = '';
+        res.on('data', chunk => result += chunk);
+        res.on('end', () => { try { resolve(JSON.parse(result)); } catch { resolve(null); } });
+      });
+      req.on('error', reject);
+      req.write(data);
+      req.end();
     });
   }
 
