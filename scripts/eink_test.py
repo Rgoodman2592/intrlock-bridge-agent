@@ -41,23 +41,26 @@ wait_busy()
 print("BUSY after reset:", busy.value)
 
 # Init sequence for SSD1681 / Waveshare 1.54" V2
-cmd(0x01); data([0xC7, 0x00, 0x01])  # Driver output control: 200 lines
-cmd(0x11); data(0x01)                 # Data entry mode: Y dec, X inc
+cmd(0x01); data([0xC7, 0x00, 0x00])  # Driver output control: 200 lines
+cmd(0x11); data(0x03)                 # Data entry mode: Y inc, X inc
 cmd(0x44); data([0x00, 0x18])         # RAM X: 0-24 (25 bytes = 200 bits)
-cmd(0x45); data([0xC7, 0x00, 0x00, 0x00])  # RAM Y: 199-0
-cmd(0x3C); data(0x05)                 # Border: white
+cmd(0x45); data([0x00, 0x00, 0xC7, 0x00])  # RAM Y: 0-199
+cmd(0x3C); data(0x01)                 # Border: black (to see edges clearly)
 cmd(0x18); data(0x80)                 # Temp sensor: internal
 cmd(0x4E); data(0x00)                 # RAM X counter
-cmd(0x4F); data([0xC7, 0x00])         # RAM Y counter
+cmd(0x4F); data([0x00, 0x00])         # RAM Y counter
 
-# Write white to RAM
+# Write white to both RAM banks (BW + RED)
 cmd(0x24)
 data([0xFF] * 5000)
+cmd(0x26)
+data([0xFF] * 5000)
 
-# Update display
-cmd(0x22); data(0xF7)
+# Update display - use full update sequence
+cmd(0x22); data(0xC7)
 cmd(0x20)
 wait_busy()
+time.sleep(2)
 
 print("Display should be white now")
 
