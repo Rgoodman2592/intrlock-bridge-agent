@@ -26,41 +26,28 @@ def parse_args():
     return p.parse_args()
 
 # ---------------------------------------------------------------------------
-# GPIO helpers — use gpiod (Pi 5 compatible) via gpioset/gpioget subprocess
+# GPIO helpers — use gpiozero (Pi 5 compatible)
 # ---------------------------------------------------------------------------
 
-GPIOCHIP = 'gpiochip4'  # Pi 5 uses gpiochip4 for the main GPIO bank
+import gpiozero
+
+_gpio_outputs = {}
 
 def _gpio_set(pin, value):
-    """Set a GPIO pin high (1) or low (0) via gpioset."""
-    try:
-        subprocess.run(
-            ['gpioset', '--mode=time', '--usec=1', GPIOCHIP, f'{pin}={value}'],
-            check=True, timeout=2
-        )
-    except Exception:
-        # Fallback: try gpiochip0
-        try:
-            subprocess.run(
-                ['gpioset', '--mode=time', '--usec=1', 'gpiochip0', f'{pin}={value}'],
-                check=True, timeout=2
-            )
-        except Exception as e:
-            print(f'[EINK-PY] gpioset error on pin {pin}: {e}', file=sys.stderr)
-
+    """Set a GPIO pin high (1) or low (0) via gpiozero."""
+    if pin not in _gpio_outputs:
+        _gpio_outputs[pin] = gpiozero.OutputDevice(pin, initial_value=False)
+    _gpio_outputs[pin].value = value
 
 def _gpio_get(pin):
-    """Read a GPIO pin via gpioget. Returns 0 or 1."""
-    for chip in (GPIOCHIP, 'gpiochip0'):
-        try:
-            result = subprocess.run(
-                ['gpioget', chip, str(pin)],
-                capture_output=True, text=True, timeout=2
-            )
-            return int(result.stdout.strip())
-        except Exception:
-            continue
-    return 0
+    """Read a GPIO pin via gpiozero. Returns 0 or 1."""
+    try:
+        d = gpiozero.InputDevice(pin)
+        val = d.value
+        d.close()
+        return int(val)
+    except Exception:
+        return 0
 
 
 # ---------------------------------------------------------------------------
