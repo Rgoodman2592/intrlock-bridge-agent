@@ -107,7 +107,7 @@ class CameraManager {
    */
   _buildFfmpegCmd(rtspTarget) {
     if (this.cameraType === 'usb') {
-      return `ffmpeg -f v4l2 -input_format mjpeg -video_size 1280x720 -framerate 15 -i ${this.devicePath} -f alsa -i default -c:v libx264 -preset ultrafast -tune zerolatency -g 30 -c:a aac -b:a 64k -f rtsp ${rtspTarget}`;
+      return `ffmpeg -f v4l2 -input_format mjpeg -video_size 1280x720 -framerate 15 -i ${this.devicePath} -c:v libx264 -preset ultrafast -tune zerolatency -g 30 -f rtsp ${rtspTarget}`;
     }
     if (this.cameraType === 'ip') {
       // Re-stream IP camera: pull RTSP, re-push to our MediaMTX/relay
