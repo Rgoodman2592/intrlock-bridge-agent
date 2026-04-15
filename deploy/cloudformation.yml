@@ -60,46 +60,31 @@ Resources:
         - Key: Name
           Value: intrlock-camera-relay
       UserData:
-        Fn::Base64: !Sub |
+        Fn::Base64: |
           #!/bin/bash
-          set -e
+          set -ex
           cd /opt
           curl -sSL "https://github.com/bluenviron/mediamtx/releases/download/v1.9.0/mediamtx_v1.9.0_linux_amd64.tar.gz" -o mediamtx.tar.gz
           tar xzf mediamtx.tar.gz
           rm mediamtx.tar.gz
           chmod +x mediamtx
-          TOKEN=$$(curl -s -X PUT "http://169.254.169.254/latest/api/token" -H "X-aws-ec2-metadata-token-ttl-seconds: 60")
-          PUBLIC_IP=$$(curl -s -H "X-aws-ec2-metadata-token: $$TOKEN" http://169.254.169.254/latest/meta-data/public-ipv4)
-          cat > /opt/mediamtx.yml << MCONF
-          logLevel: info
-          api: yes
-          apiAddress: 0.0.0.0:9997
-          rtsp: yes
-          rtspAddress: :8554
-          webrtc: yes
-          webrtcAddress: :8889
-          hls: yes
-          hlsAddress: :8888
-          webrtcICEUDPMuxAddress: :8189
-          webrtcICEHostNAT1To1IPs: [$$PUBLIC_IP]
-          paths:
-            cam:
-              source: publisher
-          MCONF
-          sed -i 's/^          //' /opt/mediamtx.yml
-          cat > /etc/systemd/system/mediamtx.service << SVCF
-          [Unit]
-          Description=MediaMTX Camera Relay
-          After=network-online.target
-          Wants=network-online.target
-          [Service]
-          ExecStart=/opt/mediamtx /opt/mediamtx.yml
-          Restart=always
-          RestartSec=5
-          [Install]
-          WantedBy=multi-user.target
-          SVCF
-          sed -i 's/^          //' /etc/systemd/system/mediamtx.service
+          TOKEN=$(curl -s -X PUT "http://169.254.169.254/latest/api/token" -H "X-aws-ec2-metadata-token-ttl-seconds: 60")
+          PUBLIC_IP=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/public-ipv4)
+          echo "logLevel: info" > /opt/mediamtx.yml
+          echo "api: yes" >> /opt/mediamtx.yml
+          echo "apiAddress: 0.0.0.0:9997" >> /opt/mediamtx.yml
+          echo "rtsp: yes" >> /opt/mediamtx.yml
+          echo "rtspAddress: :8554" >> /opt/mediamtx.yml
+          echo "webrtc: yes" >> /opt/mediamtx.yml
+          echo "webrtcAddress: :8889" >> /opt/mediamtx.yml
+          echo "hls: yes" >> /opt/mediamtx.yml
+          echo "hlsAddress: :8888" >> /opt/mediamtx.yml
+          echo "webrtcICEUDPMuxAddress: :8189" >> /opt/mediamtx.yml
+          echo "webrtcICEHostNAT1To1IPs: [$PUBLIC_IP]" >> /opt/mediamtx.yml
+          echo "paths:" >> /opt/mediamtx.yml
+          echo "  cam:" >> /opt/mediamtx.yml
+          echo "    source: publisher" >> /opt/mediamtx.yml
+          printf '[Unit]\nDescription=MediaMTX Camera Relay\nAfter=network-online.target\nWants=network-online.target\n\n[Service]\nExecStart=/opt/mediamtx /opt/mediamtx.yml\nRestart=always\nRestartSec=5\n\n[Install]\nWantedBy=multi-user.target\n' > /etc/systemd/system/mediamtx.service
           systemctl daemon-reload
           systemctl enable mediamtx
           systemctl start mediamtx
