@@ -12,20 +12,22 @@ class CameraManager {
     this.config = config;
     this.mqtt = mqtt;
     this.process = null;
+    this.ffmpegProcess = null;
     this.streaming = false;
-    this.cameraType = null;   // 'usb' | 'pi' | null
-    this.devicePath = null;   // e.g. /dev/video0
+    this.cameraType = null;   // 'usb' | 'pi' | 'ip' | null
+    this.devicePath = null;   // /dev/video0, rtsp://..., etc.
+    this.relayHost = config.relay_host || null;  // EC2 public IP for remote viewing
     this.streamPorts = {
       rtsp: 8554,
       webrtc: 8889,
       hls: 8888,
     };
+    // IP cameras configured in config.json
+    this.ipCameras = config.ip_cameras || [];
   }
 
   /**
-   * Detect available cameras and determine type.
-   * USB cameras show up as /dev/video* via v4l2.
-   * Pi camera shows up via libcamera.
+   * Detect available cameras. Priority: USB > Pi Camera > IP cameras from config.
    */
   detect() {
     // Check for USB camera via v4l2
@@ -40,9 +42,18 @@ class CameraManager {
     // Check for Pi camera via libcamera
     if (this._detectPiCamera()) {
       this.cameraType = 'pi';
-      this.devicePath = null; // libcamera doesn't use /dev/video*
+      this.devicePath = null;
       console.log('[CAMERA] Pi camera detected via libcamera');
       return { type: 'pi', device: 'libcamera' };
+    }
+
+    // Check for configured IP cameras
+    if (this.ipCameras.length > 0) {
+      const cam = this.ipCameras[0]; // Use first configured IP camera
+      this.cameraType = 'ip';
+      this.devicePath = cam.rtsp_url || cam.url;
+      console.log(`[CAMERA] IP camera configured: ${cam.name || this.devicePath}`);
+      return { type: 'ip', device: this.devicePath, name: cam.name };
     }
 
     console.log('[CAMERA] No camera detected');
@@ -55,25 +66,18 @@ class CameraManager {
         encoding: 'utf8',
         timeout: 5000,
       });
-      // Parse output: each device block starts with a non-indented header line,
-      // followed by indented /dev/* paths. We want the first /dev/video* under
-      // a USB camera header (contains "usb") and skip platform devices (pispbe, rpi-).
       const lines = output.split('\n');
       let inUsbBlock = false;
       for (const line of lines) {
         const trimmed = line.trim();
-        // Header lines are not indented (no leading whitespace)
         if (line.length > 0 && line[0] !== '\t' && line[0] !== ' ') {
-          // Check if this is a USB device (not a platform ISP/decoder)
           const lower = trimmed.toLowerCase();
           inUsbBlock = lower.includes('usb') && !lower.includes('pispbe') && !lower.includes('rpi-');
         } else if (inUsbBlock && trimmed.startsWith('/dev/video')) {
-          // First /dev/video* under a USB block is the capture device
           return trimmed;
         }
       }
     } catch {}
-    // Fallback: check if /dev/video0 exists (common for USB cameras)
     if (fs.existsSync('/dev/video0')) return '/dev/video0';
     return null;
   }
@@ -87,9 +91,6 @@ class CameraManager {
     }
   }
 
-  /**
-   * Get the local IP address for constructing stream URLs.
-   */
   _getLocalIp() {
     const nets = os.networkInterfaces();
     for (const iface of Object.values(nets)) {
@@ -101,19 +102,34 @@ class CameraManager {
   }
 
   /**
-   * Build MediaMTX config based on detected camera type.
+   * Build the FFmpeg source command based on camera type and relay config.
+   * Target is either local MediaMTX or remote relay.
+   */
+  _buildFfmpegCmd(rtspTarget) {
+    if (this.cameraType === 'usb') {
+      return `ffmpeg -f v4l2 -input_format mjpeg -video_size 1280x720 -framerate 15 -i ${this.devicePath} -c:v libx264 -preset ultrafast -tune zerolatency -g 30 -f rtsp ${rtspTarget}`;
+    }
+    if (this.cameraType === 'ip') {
+      // Re-stream IP camera: pull RTSP, re-push to our MediaMTX/relay
+      return `ffmpeg -rtsp_transport tcp -i ${this.devicePath} -c:v copy -c:a copy -f rtsp ${rtspTarget}`;
+    }
+    return null; // Pi camera uses native MediaMTX source
+  }
+
+  /**
+   * Build MediaMTX config. For USB/IP cameras, uses FFmpeg publisher.
+   * For Pi camera, uses native rpiCamera source.
    */
   _writeMediaMtxConfig() {
     let sourceConfig;
 
-    if (this.cameraType === 'usb') {
-      // Use FFmpeg as source — MediaMTX's v4l2 source is not supported on all builds.
-      // The C920 and most USB webcams support MJPEG natively which is lighter on the CPU.
+    if (this.cameraType === 'usb' || this.cameraType === 'ip') {
+      const target = `rtsp://localhost:${this.streamPorts.rtsp}/cam`;
+      const ffmpegCmd = this._buildFfmpegCmd(target);
       sourceConfig = `    source: publisher
-    runOnInit: ffmpeg -f v4l2 -input_format mjpeg -video_size 1280x720 -framerate 15 -i ${this.devicePath} -c:v libx264 -preset ultrafast -tune zerolatency -g 30 -f rtsp rtsp://localhost:${this.streamPorts.rtsp}/cam
+    runOnInit: ${ffmpegCmd}
     runOnInitRestart: yes`;
     } else if (this.cameraType === 'pi') {
-      // MediaMTX has native rpiCamera support
       sourceConfig = `    source: rpiCamera`;
     } else {
       throw new Error('No camera detected — cannot configure stream');
@@ -147,7 +163,8 @@ ${sourceConfig}
   }
 
   /**
-   * Start the video stream by spawning MediaMTX.
+   * Start the video stream. Spawns local MediaMTX and optionally
+   * a second FFmpeg process to relay to the remote EC2 server.
    */
   async start() {
     if (this.streaming) {
@@ -155,7 +172,6 @@ ${sourceConfig}
       return this.getStreamUrls();
     }
 
-    // Detect camera if not already done
     if (!this.cameraType) {
       const detected = this.detect();
       if (!detected) {
@@ -164,17 +180,13 @@ ${sourceConfig}
       }
     }
 
-    // Check MediaMTX binary exists
     if (!fs.existsSync(MEDIAMTX_BIN)) {
       console.error('[CAMERA] MediaMTX not installed at ' + MEDIAMTX_BIN);
       console.error('[CAMERA] Run: sudo /opt/intrlock-bridge/scripts/install-mediamtx.sh');
       return null;
     }
 
-    // Write config
     this._writeMediaMtxConfig();
-
-    // Kill any existing MediaMTX process
     this._killExisting();
 
     return new Promise((resolve) => {
@@ -191,26 +203,23 @@ ${sourceConfig}
         if (line) console.log(`[MEDIAMTX] ${line}`);
         if (!started && (line.includes('listener opened') || line.includes('is ready'))) {
           started = true;
-          this.streaming = true;
-          const urls = this.getStreamUrls();
-          console.log('[CAMERA] Stream started');
-          console.log(`[CAMERA]   RTSP:   ${urls.rtsp}`);
-          console.log(`[CAMERA]   WebRTC: ${urls.webrtc}`);
-          console.log(`[CAMERA]   HLS:    ${urls.hls}`);
-          this._publishEvent('stream_started', urls);
-          resolve(urls);
+          this._onStreamReady(resolve);
         }
       });
 
       this.process.stderr.on('data', (data) => {
         const line = data.toString().trim();
-        if (line) console.error(`[MEDIAMTX-ERR] ${line}`);
+        // Suppress FFmpeg progress spam — only log actual errors
+        if (line && !line.startsWith('frame=') && !line.startsWith('size=')) {
+          console.error(`[MEDIAMTX-ERR] ${line}`);
+        }
       });
 
       this.process.on('exit', (code) => {
         console.log(`[CAMERA] MediaMTX exited with code ${code}`);
         this.streaming = false;
         this.process = null;
+        this._stopRelay();
         this._publishEvent('stream_stopped', { exit_code: code });
       });
 
@@ -225,21 +234,86 @@ ${sourceConfig}
       setTimeout(() => {
         if (!started && this.process && !this.process.killed) {
           started = true;
-          this.streaming = true;
-          resolve(this.getStreamUrls());
+          this._onStreamReady(resolve);
         }
       }, 10000);
     });
   }
 
   /**
-   * Stop the video stream.
+   * Called when local MediaMTX is ready. Starts relay to EC2 if configured.
    */
+  _onStreamReady(resolve) {
+    this.streaming = true;
+    const urls = this.getStreamUrls();
+    console.log('[CAMERA] Stream started');
+    console.log(`[CAMERA]   Local WebRTC: ${urls.local.webrtc}`);
+
+    // Start relay to EC2 if relay_host is configured
+    if (this.relayHost) {
+      this._startRelay();
+      console.log(`[CAMERA]   Remote WebRTC: ${urls.remote.webrtc}`);
+    }
+
+    this._publishEvent('stream_started', urls);
+    resolve(urls);
+  }
+
+  /**
+   * Push local RTSP stream to the remote EC2 relay via FFmpeg.
+   */
+  _startRelay() {
+    if (!this.relayHost || this.ffmpegProcess) return;
+
+    const localRtsp = `rtsp://127.0.0.1:${this.streamPorts.rtsp}/cam`;
+    const remoteRtsp = `rtsp://${this.relayHost}:${this.streamPorts.rtsp}/cam`;
+
+    console.log(`[RELAY] Pushing stream to ${this.relayHost}...`);
+
+    this.ffmpegProcess = spawn('ffmpeg', [
+      '-rtsp_transport', 'tcp',
+      '-i', localRtsp,
+      '-c:v', 'copy',
+      '-c:a', 'copy',
+      '-f', 'rtsp',
+      remoteRtsp,
+    ], { stdio: ['ignore', 'ignore', 'pipe'] });
+
+    this.ffmpegProcess.stderr.on('data', (data) => {
+      const line = data.toString().trim();
+      // Only log errors, not progress
+      if (line && !line.startsWith('frame=') && !line.startsWith('size=')) {
+        console.error(`[RELAY-ERR] ${line}`);
+      }
+    });
+
+    this.ffmpegProcess.on('exit', (code) => {
+      console.log(`[RELAY] FFmpeg relay exited with code ${code}`);
+      this.ffmpegProcess = null;
+      // Auto-restart relay if still streaming
+      if (this.streaming && this.relayHost) {
+        console.log('[RELAY] Restarting in 5s...');
+        setTimeout(() => this._startRelay(), 5000);
+      }
+    });
+  }
+
+  _stopRelay() {
+    if (this.ffmpegProcess) {
+      this.ffmpegProcess.kill('SIGTERM');
+      setTimeout(() => {
+        if (this.ffmpegProcess) {
+          this.ffmpegProcess.kill('SIGKILL');
+          this.ffmpegProcess = null;
+        }
+      }, 3000);
+    }
+  }
+
   stop() {
     if (this.process) {
       console.log('[CAMERA] Stopping MediaMTX...');
       this.process.kill('SIGTERM');
-      // Force kill after 5s
       setTimeout(() => {
         if (this.process) {
           this.process.kill('SIGKILL');
@@ -247,6 +321,7 @@ ${sourceConfig}
         }
       }, 5000);
     }
+    this._stopRelay();
     this.streaming = false;
     this._killExisting();
     this._publishEvent('stream_stopped', {});
@@ -259,34 +334,51 @@ ${sourceConfig}
   }
 
   /**
-   * Get current stream URLs.
+   * Get stream URLs — both local and remote (if relay configured).
    */
   getStreamUrls() {
-    const ip = this._getLocalIp();
-    return {
-      rtsp: `rtsp://${ip}:${this.streamPorts.rtsp}/cam`,
-      webrtc: `http://${ip}:${this.streamPorts.webrtc}/cam`,
-      hls: `http://${ip}:${this.streamPorts.hls}/cam`,
-      ip,
+    const localIp = this._getLocalIp();
+    const urls = {
+      local: {
+        rtsp: `rtsp://${localIp}:${this.streamPorts.rtsp}/cam`,
+        webrtc: `http://${localIp}:${this.streamPorts.webrtc}/cam`,
+        hls: `http://${localIp}:${this.streamPorts.hls}/cam`,
+      },
+      // Keep flat rtsp/webrtc/hls for backwards compat
+      rtsp: `rtsp://${localIp}:${this.streamPorts.rtsp}/cam`,
+      webrtc: `http://${localIp}:${this.streamPorts.webrtc}/cam`,
+      hls: `http://${localIp}:${this.streamPorts.hls}/cam`,
+      ip: localIp,
     };
+
+    if (this.relayHost) {
+      urls.remote = {
+        rtsp: `rtsp://${this.relayHost}:${this.streamPorts.rtsp}/cam`,
+        webrtc: `http://${this.relayHost}:${this.streamPorts.webrtc}/cam`,
+        hls: `http://${this.relayHost}:${this.streamPorts.hls}/cam`,
+      };
+      // Default URLs point to remote when relay is configured
+      urls.rtsp = urls.remote.rtsp;
+      urls.webrtc = urls.remote.webrtc;
+      urls.hls = urls.remote.hls;
+    }
+
+    return urls;
   }
 
-  /**
-   * Get camera status for health reports.
-   */
   getStatus() {
     return {
       camera_detected: !!this.cameraType,
       camera_type: this.cameraType,
       camera_device: this.devicePath,
       streaming: this.streaming,
+      relay_host: this.relayHost,
+      relay_active: !!this.ffmpegProcess,
+      ip_cameras: this.ipCameras,
       stream_urls: this.streaming ? this.getStreamUrls() : null,
     };
   }
 
-  /**
-   * Publish a camera event via MQTT.
-   */
   _publishEvent(eventType, data) {
     if (this.mqtt) {
       this.mqtt.publish('event', {
@@ -297,9 +389,6 @@ ${sourceConfig}
     }
   }
 
-  /**
-   * Cleanup on shutdown.
-   */
   cleanup() {
     this.stop();
   }

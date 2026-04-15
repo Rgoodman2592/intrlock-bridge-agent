@@ -1,0 +1,147 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Intrlock Bridge Camera Relay - MediaMTX on EC2
+
+Parameters:
+  KeyPairName:
+    Type: String
+    Description: EC2 key pair for SSH access (leave empty to skip SSH)
+    Default: ''
+  InstanceType:
+    Type: String
+    Default: t3.micro
+    AllowedValues: [t3.micro, t3.small]
+
+Conditions:
+  HasKeyPair: !Not [!Equals [!Ref KeyPairName, '']]
+
+Resources:
+  RelaySecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Intrlock camera relay ports
+      SecurityGroupIngress:
+        # RTSP - Pi pushes stream here
+        - IpProtocol: tcp
+          FromPort: 8554
+          ToPort: 8554
+          CidrIp: 0.0.0.0/0
+        # WebRTC HTTP page
+        - IpProtocol: tcp
+          FromPort: 8889
+          ToPort: 8889
+          CidrIp: 0.0.0.0/0
+        # HLS
+        - IpProtocol: tcp
+          FromPort: 8888
+          ToPort: 8888
+          CidrIp: 0.0.0.0/0
+        # WebRTC UDP (ICE candidates)
+        - IpProtocol: udp
+          FromPort: 8189
+          ToPort: 8189
+          CidrIp: 0.0.0.0/0
+        # MediaMTX API
+        - IpProtocol: tcp
+          FromPort: 9997
+          ToPort: 9997
+          CidrIp: 0.0.0.0/0
+        # SSH
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: 0.0.0.0/0
+      Tags:
+        - Key: Name
+          Value: intrlock-camera-relay
+
+  RelayInstance:
+    Type: AWS::EC2::Instance
+    Properties:
+      InstanceType: !Ref InstanceType
+      ImageId: !Sub '{{resolve:ssm:/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64}}'
+      KeyName: !If [HasKeyPair, !Ref KeyPairName, !Ref 'AWS::NoValue']
+      SecurityGroups:
+        - !Ref RelaySecurityGroup
+      Tags:
+        - Key: Name
+          Value: intrlock-camera-relay
+      UserData:
+        Fn::Base64: |
+          #!/bin/bash
+          set -e
+
+          # Install MediaMTX
+          MEDIAMTX_VERSION="1.9.0"
+          cd /opt
+          curl -sSL "https://github.com/bluenviron/mediamtx/releases/download/v${MEDIAMTX_VERSION}/mediamtx_v${MEDIAMTX_VERSION}_linux_amd64.tar.gz" -o mediamtx.tar.gz
+          tar xzf mediamtx.tar.gz
+          rm mediamtx.tar.gz
+          chmod +x mediamtx
+
+          # Get public IP for WebRTC
+          PUBLIC_IP=$(curl -s http://169.254.169.254/latest/meta-data/public-ipv4)
+
+          # Write config
+          cat > /opt/mediamtx.yml <<'CONF'
+          logLevel: info
+
+          api: yes
+          apiAddress: 0.0.0.0:9997
+
+          rtsp: yes
+          rtspAddress: :8554
+
+          webrtc: yes
+          webrtcAddress: :8889
+
+          hls: yes
+          hlsAddress: :8888
+
+          # Single ICE candidate port for firewall simplicity
+          webrtcICEUDPMuxAddress: :8189
+
+          paths:
+            cam:
+              source: publisher
+          CONF
+
+          # Inject the public IP for WebRTC ICE
+          sed -i "s/webrtcICEHostNAT1To1IPs:.*//" /opt/mediamtx.yml
+          echo "webrtcICEHostNAT1To1IPs: [$PUBLIC_IP]" >> /opt/mediamtx.yml
+
+          # Create systemd service
+          cat > /etc/systemd/system/mediamtx.service <<'SVC'
+          [Unit]
+          Description=MediaMTX Camera Relay
+          After=network-online.target
+          Wants=network-online.target
+
+          [Service]
+          ExecStart=/opt/mediamtx /opt/mediamtx.yml
+          Restart=always
+          RestartSec=5
+
+          [Install]
+          WantedBy=multi-user.target
+          SVC
+
+          systemctl daemon-reload
+          systemctl enable mediamtx
+          systemctl start mediamtx
+
+Outputs:
+  PublicIP:
+    Description: Relay server public IP
+    Value: !GetAtt RelayInstance.PublicIp
+  WebRTCUrl:
+    Description: View live stream (WebRTC - low latency)
+    Value: !Sub 'http://${RelayInstance.PublicIp}:8889/cam'
+  HLSUrl:
+    Description: View live stream (HLS - browser compatible)
+    Value: !Sub 'http://${RelayInstance.PublicIp}:8888/cam'
+  RTSPUrl:
+    Description: RTSP endpoint (Pi pushes here)
+    Value: !Sub 'rtsp://${RelayInstance.PublicIp}:8554/cam'
+  PiCommand:
+    Description: Run this on the Pi to point stream at relay
+    Value: !Sub 'sudo sed -i "s|RELAY_HOST=.*|RELAY_HOST=${RelayInstance.PublicIp}|" /opt/intrlock-bridge/config.json && sudo systemctl restart intrlock-bridge'
