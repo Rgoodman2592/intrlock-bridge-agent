@@ -82,6 +82,21 @@ class CameraManager {
     return null;
   }
 
+  _detectAlsaDevice() {
+    try {
+      const output = execSync('arecord -l 2>/dev/null', { encoding: 'utf8', timeout: 5000 });
+      // Look for "card N:" lines — pick the first USB audio device
+      const match = output.match(/card (\d+):.*USB Audio/i);
+      if (match) {
+        const device = `hw:${match[1]},0`;
+        console.log(`[CAMERA] ALSA capture device: ${device}`);
+        return device;
+      }
+    } catch {}
+    console.log('[CAMERA] No ALSA capture device found — video only');
+    return null;
+  }
+
   _detectPiCamera() {
     try {
       execSync('libcamera-hello --list-cameras 2>&1', { timeout: 5000 });
@@ -107,7 +122,11 @@ class CameraManager {
    */
   _buildFfmpegCmd(rtspTarget) {
     if (this.cameraType === 'usb') {
-      return `ffmpeg -f v4l2 -input_format mjpeg -video_size 1280x720 -framerate 15 -i ${this.devicePath} -c:v libx264 -preset ultrafast -tune zerolatency -g 30 -f rtsp ${rtspTarget}`;
+      // Detect ALSA audio device from the webcam (card number can change)
+      const alsaDev = this._detectAlsaDevice();
+      const audioArgs = alsaDev ? `-f alsa -i ${alsaDev}` : '';
+      const audioEnc = alsaDev ? '-c:a aac -b:a 64k' : '';
+      return `ffmpeg -f v4l2 -input_format mjpeg -video_size 1280x720 -framerate 15 -i ${this.devicePath} ${audioArgs} -c:v libx264 -preset ultrafast -tune zerolatency -g 30 ${audioEnc} -f rtsp ${rtspTarget}`;
     }
     if (this.cameraType === 'ip') {
       // Re-stream IP camera: pull RTSP, re-push to our MediaMTX/relay
