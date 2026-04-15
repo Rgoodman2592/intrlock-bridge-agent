@@ -8,6 +8,7 @@ const { provision } = require('./provision');
 const { startPeriodicCheck } = require('./updater');
 const { CommandPoller } = require('./poller');
 const { EinkDisplay } = require('./eink');
+const { CameraManager } = require('./camera');
 
 async function main() {
   console.log('===========================================');
@@ -36,6 +37,14 @@ async function main() {
   const eink = new EinkDisplay(cfg);
   await eink.init();
 
+  // Initialize camera (non-fatal — disabled if no camera detected)
+  // Note: mqtt not connected yet, pass null — we set it after mqtt.connect()
+  const camera = new CameraManager(cfg, null);
+  const camDetected = camera.detect();
+  if (camDetected) {
+    console.log(`[MAIN] Camera detected: ${camDetected.type} (${camDetected.device})`);
+  }
+
   // Sensor change events
   gpio.onSensorChange((channel, state) => {
     console.log(`[SENSOR] Channel ${channel}: door ${state}`);
@@ -54,8 +63,18 @@ async function main() {
   const mqtt = new MqttClient(cfg);
   await mqtt.connect();
 
+  // Give camera access to MQTT for event publishing
+  camera.mqtt = mqtt;
+
+  // Auto-start camera stream if camera was detected and auto_stream enabled
+  if (camDetected && cfg.camera_auto_start !== false) {
+    camera.start().then((urls) => {
+      if (urls) console.log('[MAIN] Camera stream auto-started');
+    }).catch((e) => console.error('[MAIN] Camera auto-start failed:', e.message));
+  }
+
   // Handle incoming commands
-  mqtt.onCommand((data) => {
+  mqtt.onCommand(async (data) => {
     console.log('[CMD] Received:', JSON.stringify(data));
     try {
       const ch = data.channel || 1;
@@ -89,6 +108,34 @@ async function main() {
           event_type: 'display_updated',
           display_action: 'show_status',
           text: data.text,
+          timestamp: Date.now(),
+        });
+        return;
+      }
+
+      // Camera commands
+      if (data.action === 'stream_start') {
+        const urls = await camera.start();
+        mqtt.publish('event', {
+          event_type: 'stream_started',
+          stream_urls: urls,
+          timestamp: Date.now(),
+        });
+        return;
+      }
+      if (data.action === 'stream_stop') {
+        camera.stop();
+        mqtt.publish('event', {
+          event_type: 'stream_stopped',
+          timestamp: Date.now(),
+        });
+        return;
+      }
+      if (data.action === 'stream_status') {
+        const status = camera.getStatus();
+        mqtt.publish('event', {
+          event_type: 'stream_status',
+          ...status,
           timestamp: Date.now(),
         });
         return;
@@ -148,7 +195,7 @@ async function main() {
   poller.start(3000);
 
   // Start health reporting
-  const health = new HealthReporter(mqtt, gpio, cfg);
+  const health = new HealthReporter(mqtt, gpio, cfg, camera);
   health.start();
 
   // Start OTA update checker
@@ -159,6 +206,7 @@ async function main() {
   // Graceful shutdown
   const shutdown = async () => {
     console.log('[MAIN] Shutting down...');
+    camera.cleanup();
     poller.stop();
     health.stop();
     gpio.cleanup();

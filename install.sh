@@ -21,6 +21,10 @@ echo "[1/8] Updating system packages..."
 apt-get update -qq
 apt-get install -y -qq python3-pip python3-pil python3-spidev gpiod libgpiod-dev 2>/dev/null || true
 
+# Step 1b: Install camera dependencies
+echo "  Installing camera dependencies..."
+apt-get install -y -qq v4l-utils libcamera-tools 2>/dev/null || true
+
 # Step 2: Install Node.js 20
 if ! command -v node &> /dev/null || [[ $(node -v | cut -d. -f1 | tr -d 'v') -lt $NODE_VERSION ]]; then
   echo "[2/8] Installing Node.js ${NODE_VERSION}..."
@@ -101,8 +105,13 @@ if [ ! -f "$INSTALL_DIR/certs/AmazonRootCA1.pem" ]; then
   curl -sSL https://www.amazontrust.com/repository/AmazonRootCA1.pem -o "$INSTALL_DIR/certs/AmazonRootCA1.pem"
 fi
 
-# Step 8: Create and enable systemd service
-echo "[8/8] Configuring systemd service..."
+# Step 8: Install MediaMTX for camera streaming
+echo "[8/9] Installing MediaMTX..."
+chmod +x "$INSTALL_DIR/scripts/install-mediamtx.sh"
+bash "$INSTALL_DIR/scripts/install-mediamtx.sh"
+
+# Step 9: Create and enable systemd service
+echo "[9/9] Configuring systemd service..."
 cp "$INSTALL_DIR/systemd/intrlock-bridge.service" /etc/systemd/system/
 systemctl daemon-reload
 systemctl enable intrlock-bridge

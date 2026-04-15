@@ -3,10 +3,11 @@ const os = require('os');
 const pkg = require('../package.json');
 
 class HealthReporter {
-  constructor(mqtt, gpioManager, config) {
+  constructor(mqtt, gpioManager, config, camera) {
     this.mqtt = mqtt;
     this.gpio = gpioManager;
     this.config = config;
+    this.camera = camera || null;
     this.interval = null;
   }
 
@@ -38,6 +39,7 @@ class HealthReporter {
         wifi_signal: activeWifi.signalLevel || null,
         relay_states: this.gpio.getStates(),
         channel_count: Object.keys(this.gpio.relays).length,
+        camera: this.camera ? this.camera.getStatus() : null,
         timestamp: Date.now(),
       };
 
