@@ -107,7 +107,11 @@ class CameraManager {
     let sourceConfig;
 
     if (this.cameraType === 'usb') {
-      sourceConfig = `    source: v4l2://${this.devicePath}`;
+      // Use FFmpeg as source — MediaMTX's v4l2 source is not supported on all builds.
+      // The C920 and most USB webcams support MJPEG natively which is lighter on the CPU.
+      sourceConfig = `    source: publisher
+    runOnInit: ffmpeg -f v4l2 -input_format mjpeg -video_size 1280x720 -framerate 15 -i ${this.devicePath} -c:v libx264 -preset ultrafast -tune zerolatency -g 30 -f rtsp rtsp://localhost:${this.streamPorts.rtsp}/cam
+    runOnInitRestart: yes`;
     } else if (this.cameraType === 'pi') {
       // MediaMTX has native rpiCamera support
       sourceConfig = `    source: rpiCamera`;

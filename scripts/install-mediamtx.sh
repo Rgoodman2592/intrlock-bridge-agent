@@ -29,9 +29,9 @@ chmod +x mediamtx
 
 echo "  MediaMTX installed to ${INSTALL_DIR}/mediamtx"
 
-# Install v4l-utils for USB camera support
-echo "  Installing v4l-utils..."
-apt-get install -y -qq v4l-utils 2>/dev/null || true
+# Install v4l-utils for USB camera support and ffmpeg for transcoding
+echo "  Installing v4l-utils and ffmpeg..."
+apt-get install -y -qq v4l-utils ffmpeg 2>/dev/null || true
 
 # Install libcamera for Pi camera support
 echo "  Installing libcamera tools..."
