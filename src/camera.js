@@ -55,16 +55,25 @@ class CameraManager {
         encoding: 'utf8',
         timeout: 5000,
       });
-      // Parse output to find first /dev/video* device
+      // Parse output: each device block starts with a non-indented header line,
+      // followed by indented /dev/* paths. We want the first /dev/video* under
+      // a USB camera header (contains "usb") and skip platform devices (pispbe, rpi-).
       const lines = output.split('\n');
+      let inUsbBlock = false;
       for (const line of lines) {
         const trimmed = line.trim();
-        if (trimmed.startsWith('/dev/video')) {
+        // Header lines are not indented (no leading whitespace)
+        if (line.length > 0 && line[0] !== '\t' && line[0] !== ' ') {
+          // Check if this is a USB device (not a platform ISP/decoder)
+          const lower = trimmed.toLowerCase();
+          inUsbBlock = lower.includes('usb') && !lower.includes('pispbe') && !lower.includes('rpi-');
+        } else if (inUsbBlock && trimmed.startsWith('/dev/video')) {
+          // First /dev/video* under a USB block is the capture device
           return trimmed;
         }
       }
     } catch {}
-    // Fallback: check if /dev/video0 exists
+    // Fallback: check if /dev/video0 exists (common for USB cameras)
     if (fs.existsSync('/dev/video0')) return '/dev/video0';
     return null;
   }

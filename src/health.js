@@ -38,7 +38,7 @@ class HealthReporter {
         wifi_ssid: activeWifi.ssid || null,
         wifi_signal: activeWifi.signalLevel || null,
         relay_states: this.gpio.getStates(),
-        channel_count: Object.keys(this.gpio.relays).length,
+        channel_count: Object.keys(this.gpio.channelMap || {}).length,
         camera: this.camera ? this.camera.getStatus() : null,
         timestamp: Date.now(),
       };
