@@ -1,5 +1,45 @@
 {
-  "cameras": [],
+  "cameras": [
+    {
+      "id": "invid",
+      "name": "InViD Front",
+      "ip": "169.254.84.11",
+      "rtsp_url": "rtsp://admin:123456@169.254.84.11:554/",
+      "sub_stream_url": "",
+      "username": "admin",
+      "password": "123456",
+      "manufacturer": "InViD",
+      "model": "PAR-P4DRIRA3312",
+      "recording": false,
+      "enabled": true
+    },
+    {
+      "id": "honeywell",
+      "name": "Honeywell",
+      "ip": "192.168.1.165",
+      "rtsp_url": "rtsp://admin:1234@192.168.1.165:554/",
+      "sub_stream_url": "",
+      "username": "admin",
+      "password": "1234",
+      "manufacturer": "Honeywell",
+      "model": "",
+      "recording": false,
+      "enabled": true
+    },
+    {
+      "id": "webcam",
+      "name": "USB Webcam",
+      "ip": "",
+      "rtsp_url": "rtsp://localhost:8554/webcam",
+      "sub_stream_url": "",
+      "username": "",
+      "password": "",
+      "manufacturer": "Logitech",
+      "model": "C920",
+      "recording": false,
+      "enabled": true
+    }
+  ],
   "recording_settings": {
     "segment_duration": 300,
     "retention_days": 30,
