@@ -90,6 +90,14 @@ if [ "$DHCP_SUCCESS" = true ] && [ -n "$GOT_IP" ]; then
     if ip route | grep -q "default.*wlan0"; then
         ip route del default dev "$IFACE" 2>/dev/null || true
     fi
+
+    # Add camera subnet IPs as secondary addresses
+    # Cameras from previous installs may be on different subnets
+    ip addr add 192.168.1.50/24 dev "$IFACE" 2>/dev/null || true
+    ip addr add 169.254.1.1/16 dev "$IFACE" 2>/dev/null || true
+    ip addr add 172.16.0.50/24 dev "$IFACE" 2>/dev/null || true
+    ip addr add 192.168.0.50/24 dev "$IFACE" 2>/dev/null || true
+    log "Added camera subnet IPs as secondary addresses"
 else
     # ── STANDALONE MODE ──
     log "No DHCP response — STANDALONE mode"
