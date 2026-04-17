@@ -322,33 +322,81 @@ function renderStorageCard(storage) {
   const bodyEl = document.querySelector('#storage-info');
   if (!bodyEl) return;
 
-  if (!storage || !storage.mounted) {
+  const drives = storage.drives || [];
+
+  if (storage.mounted) {
+    // ── Drive is mounted — show usage + capacity estimate ──
+    const pct = storage.percent || 0;
+    const barClass = pct > 90 ? 'danger' : pct > 75 ? 'warn' : '';
+
+    // Estimate recording capacity
+    // ~2 MB/min per camera at 1080p copy, ~0.5 MB/min substream
+    const cameraCount = (storage.recording_cameras || []).length || 3;
+    const freeBytes = storage.free || 0;
+    const mbPerMinPerCam = 2; // conservative estimate for -c copy RTSP
+    const totalRecMinutes = freeBytes / (1024 * 1024) / (mbPerMinPerCam * cameraCount);
+    const recDays = Math.floor(totalRecMinutes / 1440);
+    const recHours = Math.floor((totalRecMinutes % 1440) / 60);
+
     bodyEl.innerHTML = `
       <div class="card-title">USB Storage</div>
       <div class="card-body">
-        <span class="status-text-yellow">No USB storage mounted.</span>
-        <button class="btn btn-sm btn-primary" style="margin-left:12px" onclick="mountUsb()">Mount</button>
+        <div class="storage-bar-wrap">
+          <div class="storage-bar ${barClass}" style="width:${pct}%"></div>
+        </div>
+        <div class="storage-stats">
+          <span>Used: ${formatBytes(storage.used)}</span>
+          <span>Free: ${formatBytes(storage.free)}</span>
+          <span>Total: ${formatBytes(storage.total)}</span>
+          <span>${pct}%</span>
+        </div>
+        <div class="storage-stats" style="margin-top:8px;color:var(--text)">
+          <span>Est. capacity: ~${recDays}d ${recHours}h of recording (${cameraCount} cameras)</span>
+        </div>
       </div>
     `;
     return;
   }
 
-  const pct = storage.used_percent || 0;
-  const barClass = pct > 90 ? 'danger' : pct > 75 ? 'warn' : '';
+  // ── No drive mounted — show drive selection ──
+  if (drives.length === 0) {
+    bodyEl.innerHTML = `
+      <div class="card-title">USB Storage</div>
+      <div class="card-body">
+        <span class="status-text-yellow">No USB drives detected. Plug in a USB drive.</span>
+      </div>
+    `;
+    return;
+  }
+
+  let driveRows = drives.map(d => {
+    const parts = d.partitions || [];
+    const mountable = parts.find(p => p.fstype && p.fstype !== 'apfs' && !p.mountpoint);
+    const needsFormat = parts.length === 0 || parts.every(p => !p.fstype || p.fstype === 'apfs');
+
+    let actionBtn = '';
+    if (mountable) {
+      actionBtn = `<button class="btn btn-sm btn-primary" onclick="mountDrive('${mountable.name}')">Mount</button>`;
+    } else if (needsFormat) {
+      const fsLabel = parts.length > 0 ? parts[0].fstype || 'unknown' : 'unformatted';
+      actionBtn = `<button class="btn btn-sm btn-danger" onclick="formatDrive('${d.name}', '${escapeHtml(d.model)}', '${d.sizeHuman}')">Format for Recordings</button>
+        <span class="status-text-yellow" style="margin-left:8px">${fsLabel} — needs ext4</span>`;
+    }
+
+    return `
+      <div class="rec-card" style="margin-bottom:8px">
+        <div class="rec-card-info">
+          <div class="rec-card-name">${escapeHtml(d.model || d.name)}</div>
+          <div class="rec-card-meta">/dev/${d.name} · ${d.sizeHuman}${parts.length > 0 ? ' · ' + (parts[0].fstype || 'no filesystem') : ''}</div>
+        </div>
+        <div class="rec-card-actions">${actionBtn}</div>
+      </div>
+    `;
+  }).join('');
 
   bodyEl.innerHTML = `
-    <div class="card-title">USB Storage</div>
-    <div class="card-body">
-      <div class="storage-bar-wrap">
-        <div class="storage-bar ${barClass}" style="width:${pct}%"></div>
-      </div>
-      <div class="storage-stats">
-        <span>Used: ${formatBytes(storage.used)}</span>
-        <span>Free: ${formatBytes(storage.free)}</span>
-        <span>Total: ${formatBytes(storage.total)}</span>
-        <span>${pct}%</span>
-      </div>
-    </div>
+    <div class="card-title">USB Storage — Select Drive</div>
+    <div class="card-body">${driveRows}</div>
   `;
 }
 
@@ -392,14 +440,45 @@ async function toggleRecording(id, isRecording) {
   }
 }
 
-async function mountUsb() {
-  try {
-    await api('/storage/mount', { method: 'POST' });
-    alert('Mount command sent.');
-    loadRecording();
-  } catch (err) {
-    alert('Mount failed: ' + err.message);
+async function formatDrive(deviceName, model, size) {
+  const msg = `⚠️ FORMAT DRIVE?\n\nThis will ERASE ALL DATA on:\n  ${model || deviceName} (${size})\n\nThe drive will be formatted as ext4 for camera recordings.\n\nAre you sure?`;
+  if (!confirm(msg)) return;
+
+  const msg2 = `FINAL CONFIRMATION\n\nYou are about to permanently erase /dev/${deviceName}.\n\nType YES to confirm.`;
+  const answer = prompt(msg2);
+  if (answer !== 'YES') {
+    alert('Format cancelled.');
+    return;
   }
+
+  const statusEl = document.querySelector('#storage-info .card-body');
+  statusEl.innerHTML = '<span class="status-text-yellow">Formatting drive... This may take a minute for large drives.</span>';
+
+  const result = await api('/storage/format', { method: 'POST', body: { device: deviceName } });
+  if (result.ok) {
+    alert('Drive formatted successfully! Mounting now...');
+    // Auto-mount the new partition
+    const partition = deviceName + '1';
+    await api('/storage/mount', { method: 'POST', body: { partition } });
+    loadRecording();
+  } else {
+    alert('Format failed: ' + result.message);
+    loadRecording();
+  }
+}
+
+async function mountDrive(partitionName) {
+  const result = await api('/storage/mount', { method: 'POST', body: { partition: partitionName } });
+  if (result.ok) {
+    loadRecording();
+  } else {
+    alert('Mount failed: ' + result.message);
+  }
+}
+
+async function mountUsb() {
+  await api('/storage/mount', { method: 'POST' });
+  loadRecording();
 }
 
 document.getElementById('recording-settings-form').addEventListener('submit', async (e) => {

@@ -114,7 +114,18 @@ function createDashboardServer(port = 3000) {
   });
 
   app.post('/api/storage/mount', (req, res) => {
-    res.json(storage.mount());
+    const { partition } = req.body || {};
+    if (partition) {
+      res.json(storage.mountDrive(partition));
+    } else {
+      res.json(storage.mount());
+    }
+  });
+
+  app.post('/api/storage/format', (req, res) => {
+    const { device } = req.body || {};
+    if (!device) return res.status(400).json({ ok: false, message: 'No device specified' });
+    res.json(storage.formatDrive(device));
   });
 
   app.get('/api/storage/recordings/:camId', (req, res) => {

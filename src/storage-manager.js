@@ -57,7 +57,7 @@ class StorageManager {
    */
   detectUsbDrives() {
     try {
-      const output = execSync('lsblk -Jno NAME,SIZE,FSTYPE,MOUNTPOINT,TRAN', {
+      const output = execSync('lsblk -Jbo NAME,SIZE,FSTYPE,MOUNTPOINT,TRAN,MODEL,TYPE', {
         encoding: 'utf8',
         timeout: 5000,
       });
@@ -68,12 +68,25 @@ class StorageManager {
       if (data.blockdevices) {
         for (const dev of data.blockdevices) {
           if (dev.tran === 'usb') {
+            // Include the parent disk and its partitions
+            const partitions = (dev.children || []).map(p => ({
+              name: p.name,
+              size: p.size,
+              sizeHuman: this._formatSize(p.size),
+              fstype: p.fstype || null,
+              mountpoint: p.mountpoint || null,
+              type: p.type,
+            }));
+
             usbDrives.push({
               name: dev.name,
               size: dev.size,
-              fstype: dev.fstype,
-              mountpoint: dev.mountpoint,
+              sizeHuman: this._formatSize(dev.size),
+              fstype: dev.fstype || null,
+              mountpoint: dev.mountpoint || null,
+              model: (dev.model || '').trim(),
               tran: dev.tran,
+              partitions,
             });
           }
         }
@@ -85,46 +98,113 @@ class StorageManager {
     }
   }
 
+  _formatSize(bytes) {
+    if (!bytes) return '0 B';
+    const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(1024));
+    return (bytes / Math.pow(1024, i)).toFixed(1) + ' ' + units[i];
+  }
+
   /**
-   * Mount the first available USB drive
-   * If already mounted, returns ok. Creates recordingsDir if mounted successfully.
+   * Format a USB drive as ext4 and label it for Intrlock recordings
+   * WARNING: This erases all data on the drive!
+   * @param {string} deviceName — e.g., 'sda'
    */
-  mount() {
+  formatDrive(deviceName) {
+    // Safety checks
+    if (!deviceName || deviceName.startsWith('mmcblk') || deviceName.startsWith('zram')) {
+      return { ok: false, message: 'Cannot format system drive' };
+    }
+
+    const drives = this.detectUsbDrives();
+    const drive = drives.find(d => d.name === deviceName);
+    if (!drive) {
+      return { ok: false, message: `Drive ${deviceName} not found or not USB` };
+    }
+
+    // Unmount any mounted partitions first
+    for (const part of drive.partitions) {
+      if (part.mountpoint) {
+        try {
+          execSync(`sudo umount /dev/${part.name}`, { timeout: 10000 });
+        } catch {}
+      }
+    }
+    if (drive.mountpoint) {
+      try {
+        execSync(`sudo umount /dev/${drive.name}`, { timeout: 10000 });
+      } catch {}
+    }
+
+    const devPath = `/dev/${deviceName}`;
     try {
-      if (this.isMounted()) {
-        console.log(`[STORAGE] Already mounted at ${this.mountPath}`);
-        return { ok: true, message: 'Already mounted' };
-      }
+      console.log(`[STORAGE] Formatting ${devPath} as ext4...`);
 
-      const drives = this.detectUsbDrives();
-      if (drives.length === 0) {
-        return { ok: false, message: 'No USB drives detected' };
-      }
-
-      // Find first unmounted USB drive with fstype
-      const unmountedDrive = drives.find(d => d.fstype && !d.mountpoint);
-      if (!unmountedDrive) {
-        return { ok: false, message: 'No unmounted USB drives available' };
-      }
-
-      const devicePath = `/dev/${unmountedDrive.name}`;
-      fs.mkdirSync(this.mountPath, { recursive: true });
-
-      execSync(`sudo mount ${devicePath} ${this.mountPath}`, {
-        stdio: 'pipe',
-        timeout: 10000,
+      // Create new partition table + single partition
+      execSync(`sudo parted -s ${devPath} mklabel gpt mkpart primary ext4 0% 100%`, {
+        timeout: 30000,
       });
 
-      // Create recordings directory
-      fs.mkdirSync(this.recordingsDir, { recursive: true });
+      // Wait for kernel to pick up new partition
+      execSync('sudo partprobe && sleep 2', { timeout: 10000 });
 
-      console.log(`[STORAGE] Mounted ${devicePath} at ${this.mountPath}`);
-      return { ok: true, message: `Mounted ${devicePath}`, device: devicePath };
+      // Format the partition as ext4
+      const partPath = `${devPath}1`;
+      execSync(`sudo mkfs.ext4 -F -L intrlock-recordings ${partPath}`, {
+        timeout: 120000, // Large drives can take a while
+      });
+
+      console.log(`[STORAGE] Formatted ${partPath} as ext4`);
+      return { ok: true, message: `Formatted ${devPath} as ext4`, partition: partPath };
     } catch (err) {
-      const message = err.message || 'Mount failed';
-      console.error(`[STORAGE] Mount error: ${message}`);
-      return { ok: false, message };
+      console.error(`[STORAGE] Format error:`, err.message);
+      return { ok: false, message: err.message.slice(0, 200) };
     }
+  }
+
+  /**
+   * Mount a specific drive/partition to the recordings path
+   * @param {string} partitionName — e.g., 'sda1'
+   */
+  mountDrive(partitionName) {
+    if (this.isMounted()) {
+      return { ok: true, message: 'Already mounted' };
+    }
+
+    if (!partitionName) {
+      return { ok: false, message: 'No partition specified' };
+    }
+
+    const devPath = `/dev/${partitionName}`;
+    try {
+      fs.mkdirSync(this.mountPath, { recursive: true });
+      execSync(`sudo mount ${devPath} ${this.mountPath}`, { timeout: 10000 });
+      fs.mkdirSync(this.recordingsDir, { recursive: true });
+      console.log(`[STORAGE] Mounted ${devPath} at ${this.mountPath}`);
+      return { ok: true, message: `Mounted ${devPath}` };
+    } catch (err) {
+      return { ok: false, message: err.message.slice(0, 200) };
+    }
+  }
+
+  /**
+   * Mount the first available USB drive (legacy auto-mount)
+   */
+  mount() {
+    if (this.isMounted()) {
+      return { ok: true, message: 'Already mounted' };
+    }
+
+    const drives = this.detectUsbDrives();
+    for (const drive of drives) {
+      for (const part of drive.partitions) {
+        if (part.fstype && !part.mountpoint) {
+          return this.mountDrive(part.name);
+        }
+      }
+    }
+
+    return { ok: false, message: 'No mountable USB partitions found' };
   }
 
   /**
