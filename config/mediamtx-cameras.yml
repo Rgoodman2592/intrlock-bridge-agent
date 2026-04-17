@@ -1,0 +1,15 @@
+webrtcAddress: :8889
+hlsAddress: :8888
+rtspAddress: :8554
+api: yes
+apiAddress: :9997
+paths:
+  invid:
+    source: rtsp://admin:123456@169.254.84.11:554/
+    sourceOnDemand: yes
+  honeywell:
+    source: rtsp://admin:1234@192.168.1.165:554/
+    sourceOnDemand: yes
+  webcam:
+    runOnInit: ffmpeg -f v4l2 -framerate 15 -video_size 1280x720 -i /dev/video0 -c:v libx264 -preset ultrafast -tune zerolatency -f rtsp rtsp://localhost:8554/webcam
+    runOnInitRestart: yes
