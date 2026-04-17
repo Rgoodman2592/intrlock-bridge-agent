@@ -22,7 +22,7 @@ apt-get install -y -qq git curl jq qrencode ffmpeg
 
 if [ "$DEVICE_TYPE" = "panel" ]; then
   echo "📦 [2/7] Installing display packages..."
-  apt-get install -y -qq chromium xserver-xorg x11-xserver-utils xinit openbox unclutter pulseaudio alsa-utils libcamera-apps
+  apt-get install -y -qq chromium-browser xserver-xorg 2>/dev/null || apt-get install -y -qq chromium xserver-xorg x11-xserver-utils xinit openbox unclutter pulseaudio alsa-utils libcamera-apps
 fi
 
 echo "📦 [3/7] Installing Node.js..."
@@ -110,7 +110,8 @@ KURL=$(jq -r '.kiosk_url' "$CFG" 2>/dev/null)
 [ "$ACT" = "true" ] && [ -n "$KURL" ] && [ "$KURL" != "null" ] && URL="$KURL" || URL="file:///opt/intrlock-bridge/activation-page.html"
 xset s off; xset -dpms; xset s noblank
 unclutter -idle 3 -root &
-chromium --kiosk --noerrdialogs --disable-infobars --disable-session-crashed-bubble --no-first-run --start-fullscreen --autoplay-policy=no-user-gesture-required --use-gl=egl "$URL"
+CHROME=$(command -v chromium-browser || command -v chromium || echo chromium-browser)
+$CHROME --kiosk --noerrdialogs --disable-infobars --disable-session-crashed-bubble --no-first-run --start-fullscreen --autoplay-policy=no-user-gesture-required --use-gl=egl "$URL"
 KSK
   chmod +x "$INSTALL_DIR/start-kiosk.sh"
 
@@ -124,13 +125,14 @@ HTML
   mkdir -p /etc/xdg/openbox
   echo '/opt/intrlock-bridge/start-kiosk.sh &' > /etc/xdg/openbox/autostart
 
+  KUSER=$(ls /home/ | head -1 || echo pi)
   cat > /etc/systemd/system/intrlock-kiosk.service << 'KVC'
 [Unit]
 Description=Intrlock Kiosk
 After=network-online.target
 Wants=network-online.target
 [Service]
-User=intrlock-panel
+User=${KUSER}
 Environment=DISPLAY=:0
 ExecStartPre=/bin/sleep 5
 ExecStart=/usr/bin/xinit /usr/bin/openbox-session -- :0 -nocursor
