@@ -146,9 +146,8 @@ function createDashboardServer(port = 3000) {
       Promise.resolve(systemInfo.getNetworkInfo()),
     ]);
     const services = {
-      mediamtx: systemInfo.getServiceStatus('intrlock-mediamtx'),
-      bridge: systemInfo.getServiceStatus('intrlock-bridge'),
-      webcam: systemInfo.getServiceStatus('intrlock-webcam'),
+      'intrlock-bridge': systemInfo.getServiceStatus('intrlock-bridge'),
+      'intrlock-mediamtx': systemInfo.getServiceStatus('intrlock-mediamtx'),
       dnsmasq: systemInfo.getServiceStatus('dnsmasq'),
     };
     const leases = systemInfo.getDhcpLeases();

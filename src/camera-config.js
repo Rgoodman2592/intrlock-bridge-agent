@@ -121,7 +121,7 @@ function regenerateMediaMtx(data) {
   if (!cameraData) load();
 
   const cameras = data?.cameras || cameraData.cameras;
-  const enabledCams = cameras.filter(c => c.enabled && c.rtsp_url);
+  const enabledCams = cameras.filter(c => c.enabled && (c.rtsp_url || c.ffmpeg_source));
 
   let paths = '';
   for (const cam of enabledCams) {
