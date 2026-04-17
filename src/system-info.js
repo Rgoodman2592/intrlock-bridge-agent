@@ -47,6 +47,18 @@ async function getSystemInfo() {
 }
 
 /**
+ * Get network mode (client or standalone) from /tmp/intrlock-network-mode
+ */
+function getNetworkMode() {
+  try {
+    if (fs.existsSync('/tmp/intrlock-network-mode')) {
+      return fs.readFileSync('/tmp/intrlock-network-mode', 'utf8').trim();
+    }
+  } catch {}
+  return 'unknown';
+}
+
+/**
  * Get network information for each interface with IPv4 non-internal address.
  */
 function getNetworkInfo() {
@@ -64,10 +76,11 @@ function getNetworkInfo() {
       }
     });
 
+    result._mode = getNetworkMode();
     return result;
   } catch (e) {
     console.error('[SYSTEM-INFO] getNetworkInfo failed:', e.message);
-    return {};
+    return { _mode: 'unknown' };
   }
 }
 

@@ -1,0 +1,13 @@
+[Unit]
+Description=Intrlock Network Mode Detection
+Before=intrlock-bridge.service intrlock-mediamtx.service dnsmasq.service
+After=network.target
+Wants=network.target
+
+[Service]
+Type=oneshot
+ExecStart=/bin/bash /opt/intrlock-bridge/scripts/network-mode.sh
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

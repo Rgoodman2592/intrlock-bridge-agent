@@ -1,12 +1,12 @@
 [Unit]
 Description=Intrlock MediaMTX Camera Bridge
-After=network-online.target intrlock-bridge.service
+After=network-online.target intrlock-network.service intrlock-bridge.service
 Wants=network-online.target
+Requires=intrlock-network.service
 
 [Service]
 Type=simple
 ExecStartPre=/bin/sleep 5
-ExecStartPre=/bin/bash -c 'ip addr add 192.168.1.50/24 dev eth0 2>/dev/null; ip addr add 169.254.1.1/16 dev eth0 2>/dev/null; ip addr add 172.16.0.50/24 dev eth0 2>/dev/null; ip addr add 192.168.0.50/24 dev eth0 2>/dev/null; ip route del default dev eth0 2>/dev/null; true'
 ExecStart=/opt/mediamtx/mediamtx /opt/intrlock-bridge/config/mediamtx-cameras.yml
 Restart=always
 RestartSec=10
