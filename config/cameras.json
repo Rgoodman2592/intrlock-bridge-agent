@@ -1,0 +1,9 @@
+{
+  "cameras": [],
+  "recording_settings": {
+    "segment_duration": 300,
+    "retention_days": 30,
+    "max_disk_percent": 90,
+    "usb_mount_path": "/mnt/usb"
+  }
+}
