@@ -129,8 +129,13 @@ function regenerateMediaMtx(data) {
     if (cam.rpi_camera) {
       // Pi Camera Module (CSI) — use native rpiCamera source
       paths += `    source: rpiCamera\n`;
+    } else if (cam.ffmpeg_source && cam.rtsp_url) {
+      // Local device with separate stream URL (e.g., rpicam-vid TCP output)
+      paths += `    source: ${cam.rtsp_url}\n`;
+      paths += `    runOnInit: ${cam.ffmpeg_source}\n`;
+      paths += `    runOnInitRestart: yes\n`;
     } else if (cam.ffmpeg_source) {
-      // Local device (USB webcam, Pi camera via rpicam-vid) — run ffmpeg/rpicam command
+      // Local device pushing directly to MediaMTX (e.g., USB webcam)
       paths += `    runOnInit: ${cam.ffmpeg_source}\n`;
       paths += `    runOnInitRestart: yes\n`;
     } else {
