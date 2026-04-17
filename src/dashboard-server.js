@@ -110,7 +110,65 @@ function createDashboardServer(port = 3000) {
     const stats = storage.getDiskStats();
     const drives = storage.detectUsbDrives();
     const recordingDirs = storage.listRecordingDirs();
-    res.json({ ...stats, drives, recording_cameras: recordingDirs });
+    const cameras = cameraConfig.listCameras();
+    const recSettings = cameraConfig.getRecordingSettings();
+
+    // Calculate per-camera bitrate estimates and total capacity
+    let totalBytesPerSec = 0;
+    const cameraEstimates = cameras.filter(c => c.enabled).map(cam => {
+      // Determine which stream is used for recording (sub if available, else main)
+      const usesSubStream = !!cam.sub_stream_url;
+      let bitrateKbps;
+      let streamLabel;
+
+      if (cam.ffmpeg_source) {
+        // USB webcam — h264 ultrafast ~1500 kbps at 720p
+        bitrateKbps = 1500;
+        streamLabel = '720p h264 (USB)';
+      } else if (usesSubStream) {
+        // IP camera sub-stream — typically 640x480 ~500-800 kbps
+        bitrateKbps = 700;
+        streamLabel = 'Sub-stream (~480p)';
+      } else {
+        // IP camera main stream — varies by resolution
+        // 4MP/1080p RTSP copy: ~4000-6000 kbps, use 5000 as estimate
+        bitrateKbps = 5000;
+        streamLabel = 'Main stream (~1080p)';
+      }
+
+      const bytesPerSec = (bitrateKbps * 1024) / 8;
+      totalBytesPerSec += bytesPerSec;
+
+      return {
+        id: cam.id,
+        name: cam.name,
+        stream: streamLabel,
+        bitrate_kbps: bitrateKbps,
+        gb_per_day: Math.round((bytesPerSec * 86400) / (1024 * 1024 * 1024) * 10) / 10,
+      };
+    });
+
+    // Estimate total recording capacity from free space
+    const freeBytes = stats.free || 0;
+    const maxUsableBytes = stats.total
+      ? stats.total * (recSettings.max_disk_percent / 100) - (stats.used || 0)
+      : freeBytes;
+    const usableBytes = Math.max(0, maxUsableBytes);
+
+    const totalGbPerDay = cameraEstimates.reduce((sum, c) => sum + c.gb_per_day, 0);
+    const estimatedDays = totalGbPerDay > 0 ? Math.floor(usableBytes / (1024 * 1024 * 1024) / totalGbPerDay) : 0;
+
+    res.json({
+      ...stats,
+      drives,
+      recording_cameras: recordingDirs,
+      capacity: {
+        cameras: cameraEstimates,
+        total_gb_per_day: Math.round(totalGbPerDay * 10) / 10,
+        estimated_days: estimatedDays,
+        max_disk_percent: recSettings.max_disk_percent,
+      },
+    });
   });
 
   app.post('/api/storage/mount', (req, res) => {

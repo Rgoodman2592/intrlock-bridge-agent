@@ -328,15 +328,29 @@ function renderStorageCard(storage) {
     // ── Drive is mounted — show usage + capacity estimate ──
     const pct = storage.percent || 0;
     const barClass = pct > 90 ? 'danger' : pct > 75 ? 'warn' : '';
+    const cap = storage.capacity || {};
+    const camEstimates = cap.cameras || [];
 
-    // Estimate recording capacity
-    // ~2 MB/min per camera at 1080p copy, ~0.5 MB/min substream
-    const cameraCount = (storage.recording_cameras || []).length || 3;
-    const freeBytes = storage.free || 0;
-    const mbPerMinPerCam = 2; // conservative estimate for -c copy RTSP
-    const totalRecMinutes = freeBytes / (1024 * 1024) / (mbPerMinPerCam * cameraCount);
-    const recDays = Math.floor(totalRecMinutes / 1440);
-    const recHours = Math.floor((totalRecMinutes % 1440) / 60);
+    let capacityHtml = '';
+    if (camEstimates.length > 0) {
+      const camRows = camEstimates.map(c =>
+        `<tr><td>${escapeHtml(c.name)}</td><td>${c.stream}</td><td>${c.bitrate_kbps} kbps</td><td>${c.gb_per_day} GB/day</td></tr>`
+      ).join('');
+
+      capacityHtml = `
+        <table class="capacity-table" style="margin-top:12px;width:100%;font-size:12px">
+          <tr style="color:var(--text-dim)"><th>Camera</th><th>Stream</th><th>Bitrate</th><th>Storage/Day</th></tr>
+          ${camRows}
+          <tr style="border-top:1px solid var(--surface2);font-weight:bold">
+            <td colspan="3">Total</td><td>${cap.total_gb_per_day || 0} GB/day</td>
+          </tr>
+        </table>
+        <div style="margin-top:10px;font-size:14px;color:var(--text)">
+          Est. recording capacity: <strong style="color:var(--green)">${cap.estimated_days || 0} days</strong>
+          <span style="color:var(--text-dim);font-size:12px">(at ${cap.max_disk_percent || 90}% max disk usage)</span>
+        </div>
+      `;
+    }
 
     bodyEl.innerHTML = `
       <div class="card-title">USB Storage</div>
@@ -350,9 +364,7 @@ function renderStorageCard(storage) {
           <span>Total: ${formatBytes(storage.total)}</span>
           <span>${pct}%</span>
         </div>
-        <div class="storage-stats" style="margin-top:8px;color:var(--text)">
-          <span>Est. capacity: ~${recDays}d ${recHours}h of recording (${cameraCount} cameras)</span>
-        </div>
+        ${capacityHtml}
       </div>
     `;
     return;
