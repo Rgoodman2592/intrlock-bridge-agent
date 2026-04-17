@@ -121,12 +121,15 @@ function regenerateMediaMtx(data) {
   if (!cameraData) load();
 
   const cameras = data?.cameras || cameraData.cameras;
-  const enabledCams = cameras.filter(c => c.enabled && (c.rtsp_url || c.ffmpeg_source));
+  const enabledCams = cameras.filter(c => c.enabled && (c.rtsp_url || c.ffmpeg_source || c.rpi_camera));
 
   let paths = '';
   for (const cam of enabledCams) {
     paths += `  ${cam.id}:\n`;
-    if (cam.ffmpeg_source) {
+    if (cam.rpi_camera) {
+      // Pi Camera Module (CSI) — use native rpiCamera source
+      paths += `    source: rpiCamera\n`;
+    } else if (cam.ffmpeg_source) {
       // USB webcam or other local device — use ffmpeg publisher
       paths += `    source: publisher\n`;
       paths += `    runOnInit: ${cam.ffmpeg_source}\n`;

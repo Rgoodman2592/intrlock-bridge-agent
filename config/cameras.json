@@ -27,6 +27,20 @@
       "enabled": true
     },
     {
+      "id": "aicam",
+      "name": "AI Camera",
+      "ip": "",
+      "rtsp_url": "",
+      "sub_stream_url": "",
+      "rpi_camera": true,
+      "username": "",
+      "password": "",
+      "manufacturer": "Raspberry Pi",
+      "model": "AI Camera IMX500",
+      "recording": false,
+      "enabled": true
+    },
+    {
       "id": "webcam",
       "name": "USB Webcam",
       "ip": "",
