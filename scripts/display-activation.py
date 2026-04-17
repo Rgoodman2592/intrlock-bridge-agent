@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Render activation code on the SPI TFT display (480x320 framebuffer).
+Render activation code on the SPI TFT display (320x480 framebuffer, landscape via rotation).
 Fetches code from the local dashboard API and draws it to /dev/fb1.
 
 Usage:
@@ -11,21 +11,28 @@ Usage:
 import sys
 import os
 import json
-import struct
 import time
 import urllib.request
 
 API_BASE = "http://localhost:3000/api"
 FB_DEVICE = "/dev/fb1"
-WIDTH = 480
-HEIGHT = 320
 
-# Colors (RGB565)
-BG_COLOR = (0x1a, 0x1a, 0x2e)       # Dark navy
-ACCENT_COLOR = (0xe9, 0x45, 0x60)    # Red/pink
-TEXT_COLOR = (0xee, 0xee, 0xee)      # White
-DIM_COLOR = (0x99, 0x99, 0x99)       # Gray
-GREEN_COLOR = (0x4a, 0xde, 0x80)     # Green
+# Detect framebuffer size from sysfs, fall back to 320x480
+def get_fb_size():
+    try:
+        with open("/sys/class/graphics/fb1/virtual_size") as f:
+            w, h = f.read().strip().split(",")
+            return int(w), int(h)
+    except:
+        return 320, 480
+
+FB_WIDTH, FB_HEIGHT = get_fb_size()
+
+# Colors (RGB)
+BG_COLOR = (0x0a, 0x0a, 0x1a)
+ACCENT_COLOR = (0xe9, 0x45, 0x60)
+TEXT_COLOR = (0xee, 0xee, 0xee)
+DIM_COLOR = (0x88, 0x88, 0x88)
 
 def rgb_to_rgb565(r, g, b):
     return ((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3)
@@ -42,57 +49,51 @@ def api_call(path, method="GET", data=None):
     except Exception as e:
         return {"error": str(e)}
 
-def draw_to_framebuffer(code_str, expires_in, hostname="intrlock-bridge"):
-    """Draw activation code screen to framebuffer using PIL."""
+def draw_to_framebuffer(code_str, expires_in):
+    """Draw activation code to framebuffer. Renders in landscape (480x320) then rotates to match fb."""
     try:
         from PIL import Image, ImageDraw, ImageFont
     except ImportError:
-        print("ERROR: python3-pil not installed. Run: sudo apt install python3-pil")
+        print("ERROR: python3-pil not installed")
         sys.exit(1)
 
-    img = Image.new("RGB", (WIDTH, HEIGHT), BG_COLOR)
+    # Draw in landscape orientation (480 wide x 320 tall)
+    W, H = 480, 320
+    img = Image.new("RGB", (W, H), BG_COLOR)
     draw = ImageDraw.Draw(img)
 
-    # Try to load a monospace font, fall back to default
-    font_large = None
-    font_medium = None
-    font_small = None
+    # Load fonts
+    font_code = font_label = font_small = None
     for font_path in [
         "/usr/share/fonts/truetype/dejavu/DejaVuSansMono-Bold.ttf",
-        "/usr/share/fonts/truetype/freefont/FreeSansBold.ttf",
         "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+        "/usr/share/fonts/truetype/freefont/FreeSansBold.ttf",
     ]:
         if os.path.exists(font_path):
             try:
-                font_large = ImageFont.truetype(font_path, 72)
-                font_medium = ImageFont.truetype(font_path, 24)
-                font_small = ImageFont.truetype(font_path, 16)
+                font_code = ImageFont.truetype(font_path, 80)
+                font_label = ImageFont.truetype(font_path, 22)
+                font_small = ImageFont.truetype(font_path, 18)
                 break
             except:
                 pass
 
-    if not font_large:
-        font_large = ImageFont.load_default()
-        font_medium = font_large
-        font_small = font_large
+    if not font_code:
+        font_code = ImageFont.load_default()
+        font_label = font_code
+        font_small = font_code
 
-    # Header bar
-    draw.rectangle([(0, 0), (WIDTH, 40)], fill=(0x16, 0x21, 0x3e))
-    draw.text((12, 8), "INTRLOCK CAMERA BRIDGE", fill=TEXT_COLOR, font=font_small)
+    if code_str and code_str != "------":
+        # ── Show activation code ──
+        formatted = f"{code_str[:3]} - {code_str[3:]}"
 
-    # Status dot
-    draw.ellipse([(440, 14), (452, 26)], fill=GREEN_COLOR)
-    draw.text((456, 8), "OK", fill=GREEN_COLOR, font=font_small)
+        # Code centered and huge
+        draw.text((W // 2, 120), formatted, fill=ACCENT_COLOR, font=font_code, anchor="mm")
 
-    # Title
-    draw.text((WIDTH // 2, 70), "ACTIVATION CODE", fill=DIM_COLOR, font=font_medium, anchor="mm")
+        # Label above
+        draw.text((W // 2, 45), "ACTIVATION CODE", fill=TEXT_COLOR, font=font_label, anchor="mm")
 
-    # Code display
-    if code_str:
-        formatted = f"{code_str[:3]}  –  {code_str[3:]}"
-        draw.text((WIDTH // 2, 155), formatted, fill=ACCENT_COLOR, font=font_large, anchor="mm")
-
-        # Timer
+        # Timer below
         if expires_in > 0:
             mins = expires_in // 60
             secs = expires_in % 60
@@ -101,52 +102,56 @@ def draw_to_framebuffer(code_str, expires_in, hostname="intrlock-bridge"):
             if expires_in <= 60:
                 color = ACCENT_COLOR
             elif expires_in <= 180:
-                color = (0xfb, 0xbf, 0x24)  # Yellow
-            draw.text((WIDTH // 2, 210), timer_text, fill=color, font=font_medium, anchor="mm")
-        else:
-            draw.text((WIDTH // 2, 210), "EXPIRED", fill=ACCENT_COLOR, font=font_medium, anchor="mm")
+                color = (0xfb, 0xbf, 0x24)
+            draw.text((W // 2, 185), timer_text, fill=color, font=font_label, anchor="mm")
+
+        # Instructions
+        draw.text((W // 2, 250), "Enter this code in the", fill=DIM_COLOR, font=font_small, anchor="mm")
+        draw.text((W // 2, 275), "Intrlock dashboard", fill=DIM_COLOR, font=font_small, anchor="mm")
+
     else:
-        draw.text((WIDTH // 2, 150), "No active code", fill=DIM_COLOR, font=font_medium, anchor="mm")
-        draw.text((WIDTH // 2, 185), "Generate from dashboard", fill=DIM_COLOR, font=font_small, anchor="mm")
+        # ── No code ──
+        draw.text((W // 2, 140), "No active code", fill=DIM_COLOR, font=font_label, anchor="mm")
+        draw.text((W // 2, 180), "Generate from dashboard", fill=DIM_COLOR, font=font_small, anchor="mm")
 
-    # Footer
-    draw.text((WIDTH // 2, 265), "Enter this code in the Intrlock dashboard", fill=DIM_COLOR, font=font_small, anchor="mm")
-    draw.text((WIDTH // 2, 285), "to link this bridge's cameras", fill=DIM_COLOR, font=font_small, anchor="mm")
+    # Rotate image to match framebuffer orientation
+    # FB is 320x480 (portrait), we drew 480x320 (landscape)
+    # Rotate 90° clockwise so landscape content displays correctly
+    if FB_WIDTH == 320 and FB_HEIGHT == 480:
+        img = img.rotate(-90, expand=True)
 
-    # Hostname + IP
-    draw.text((WIDTH // 2, 310), hostname, fill=(0x0f, 0x34, 0x60), font=font_small, anchor="mm")
+    # Write to framebuffer as RGB565
+    write_rgb565(img, FB_WIDTH, FB_HEIGHT)
 
-    # Convert to RGB565 and write to framebuffer
-    write_rgb565(img)
-
-def write_rgb565(img):
+def write_rgb565(img, width, height):
     """Convert PIL image to RGB565 and write to framebuffer device."""
     if not os.path.exists(FB_DEVICE):
-        print(f"Framebuffer {FB_DEVICE} not found. Display overlay may not be loaded.")
-        # Save as PNG for debugging
+        print(f"Framebuffer {FB_DEVICE} not found.")
         img.save("/tmp/activation-display.png")
         print("Saved preview to /tmp/activation-display.png")
         return
 
     pixels = img.load()
-    buf = bytearray(WIDTH * HEIGHT * 2)
-    for y in range(HEIGHT):
-        for x in range(WIDTH):
+    actual_w, actual_h = img.size
+    buf = bytearray(width * height * 2)
+
+    for y in range(min(height, actual_h)):
+        for x in range(min(width, actual_w)):
             r, g, b = pixels[x, y]
             rgb565 = rgb_to_rgb565(r, g, b)
-            offset = (y * WIDTH + x) * 2
+            offset = (y * width + x) * 2
             buf[offset] = rgb565 & 0xFF
             buf[offset + 1] = (rgb565 >> 8) & 0xFF
 
     with open(FB_DEVICE, "wb") as fb:
         fb.write(buf)
-    print(f"Written {len(buf)} bytes to {FB_DEVICE}")
+    print(f"Written {len(buf)} bytes to {FB_DEVICE} ({width}x{height})")
 
 def main():
     loop_mode = "--loop" in sys.argv
     generate = "--generate" in sys.argv or not loop_mode
 
-    # Generate a new code if requested
+    result = {}
     if generate:
         result = api_call("/activation/generate", method="POST")
         if result.get("ok"):
@@ -156,18 +161,14 @@ def main():
         else:
             print(f"Generate failed: {result.get('message', 'unknown error')}")
 
-    # Display loop
     while True:
         status = api_call("/activation/status")
-        if status.get("active"):
-            # We need the actual code — generate returns it, status doesn't
-            # If we just generated, use that. Otherwise show masked.
-            if generate and result.get("ok"):
-                code = result["code"]
-            else:
-                code = "------"
+        if status.get("active") and result.get("ok"):
+            code = result["code"]
             expires_in = status.get("expires_in", 0)
             draw_to_framebuffer(code, expires_in)
+        elif status.get("active"):
+            draw_to_framebuffer("------", status.get("expires_in", 0))
         else:
             draw_to_framebuffer(None, 0)
 
