@@ -4,8 +4,11 @@
 
 CFG="/opt/intrlock-bridge/config.json"
 
-# Rotate display for horizontal 5" screen
-xrandr --output DSI-1 --rotate right 2>/dev/null
+# Get screen dimensions
+sleep 2
+SCREEN_RES=$(xrandr 2>/dev/null | grep '*' | awk '{print $1}')
+SCREEN_W=$(echo "$SCREEN_RES" | cut -d'x' -f1)
+SCREEN_H=$(echo "$SCREEN_RES" | cut -d'x' -f2)
 
 # Disable screensaver and power management
 xset s off
@@ -36,4 +39,6 @@ exec $CHROME \
   --start-fullscreen \
   --disable-gpu \
   --autoplay-policy=no-user-gesture-required \
+  --window-position=0,0 \
+  --window-size=${SCREEN_W:-1280},${SCREEN_H:-720} \
   "$URL"
