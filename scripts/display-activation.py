@@ -17,13 +17,34 @@ import time
 import urllib.request
 
 API_BASE = "http://localhost:3000/api"
-FB_DEVICE = "/dev/fb1"
 W, H = 480, 320  # Landscape render size
 
-# Detect actual framebuffer dimensions
+# Auto-detect the SPI TFT framebuffer device (could be fb0 or fb1)
+def detect_fb_device():
+    for fb in ["fb0", "fb1"]:
+        try:
+            with open(f"/sys/class/graphics/{fb}/name") as f:
+                name = f.read().strip()
+                if "ili" in name.lower() or "fbtft" in name.lower() or "fb_ili" in name.lower():
+                    return f"/dev/{fb}", fb
+        except:
+            pass
+    # Fallback: check virtual_size for 320x480 (SPI TFT signature)
+    for fb in ["fb0", "fb1"]:
+        try:
+            with open(f"/sys/class/graphics/{fb}/virtual_size") as f:
+                size = f.read().strip()
+                if size in ("320,480", "480,320"):
+                    return f"/dev/{fb}", fb
+        except:
+            pass
+    return "/dev/fb0", "fb0"
+
+FB_DEVICE, FB_NAME = detect_fb_device()
+
 def get_fb_size():
     try:
-        with open("/sys/class/graphics/fb1/virtual_size") as f:
+        with open(f"/sys/class/graphics/{FB_NAME}/virtual_size") as f:
             w, h = f.read().strip().split(",")
             return int(w), int(h)
     except:
