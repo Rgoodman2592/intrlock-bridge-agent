@@ -1,0 +1,190 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Intrlock Camera Bridge</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <header class="header">
+    <div class="header-title">
+      <span class="header-icon">&#9672;</span>
+      Intrlock Camera Bridge
+    </div>
+    <div id="system-badge" class="system-badge">
+      <span id="badge-temp">--°C</span>
+      <span class="badge-sep">|</span>
+      <span id="badge-ram">RAM --%</span>
+    </div>
+  </header>
+
+  <nav class="tab-nav">
+    <button class="tab active" data-tab="live">Live View</button>
+    <button class="tab" data-tab="cameras">Cameras</button>
+    <button class="tab" data-tab="recording">Recording</button>
+    <button class="tab" data-tab="playback">Playback</button>
+    <button class="tab" data-tab="system">System</button>
+  </nav>
+
+  <main class="main-content">
+
+    <!-- Live View Tab -->
+    <section id="tab-live" class="tab-content active">
+      <div class="toolbar">
+        <label class="toolbar-label">Grid:</label>
+        <div class="grid-selector">
+          <button class="btn btn-sm grid-btn" data-grid="1">1×1</button>
+          <button class="btn btn-sm grid-btn active" data-grid="2">2×2</button>
+          <button class="btn btn-sm grid-btn" data-grid="3">3×3</button>
+        </div>
+      </div>
+      <div id="live-grid" class="live-grid grid-2"></div>
+    </section>
+
+    <!-- Cameras Tab -->
+    <section id="tab-cameras" class="tab-content">
+      <div class="toolbar">
+        <button class="btn btn-primary" id="btn-add-camera">+ Add Camera</button>
+        <button class="btn" id="btn-discover">&#128270; Discover</button>
+      </div>
+      <div id="camera-list"></div>
+    </section>
+
+    <!-- Recording Tab -->
+    <section id="tab-recording" class="tab-content">
+      <div id="storage-info" class="card storage-card">
+        <div class="card-title">USB Storage</div>
+        <div id="storage-body" class="card-body">Loading...</div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">Recording Settings</div>
+        <form id="recording-settings-form" class="settings-form">
+          <div class="form-group">
+            <label>Segment Duration (seconds)</label>
+            <input type="number" name="segment_duration" id="setting-segment-duration" min="30" max="3600" value="300" />
+          </div>
+          <div class="form-group">
+            <label>Retention (days)</label>
+            <input type="number" name="retention_days" id="setting-retention-days" min="1" max="365" value="7" />
+          </div>
+          <div class="form-group">
+            <label>Max Disk Usage (%)</label>
+            <input type="number" name="max_disk_percent" id="setting-max-disk" min="10" max="95" value="80" />
+          </div>
+          <button type="submit" class="btn btn-primary">Save Settings</button>
+        </form>
+      </div>
+
+      <div id="recording-status-list"></div>
+    </section>
+
+    <!-- Playback Tab -->
+    <section id="tab-playback" class="tab-content">
+      <div class="toolbar">
+        <select id="playback-camera-select" class="select-input">
+          <option value="">Select Camera...</option>
+        </select>
+        <select id="playback-date-select" class="select-input" disabled>
+          <option value="">Select Date...</option>
+        </select>
+      </div>
+      <div id="playback-segments"></div>
+      <div id="playback-player" class="hidden">
+        <div class="card">
+          <div class="card-title">Now Playing: <span id="playback-filename"></span></div>
+          <video id="playback-video" controls class="playback-video"></video>
+        </div>
+      </div>
+    </section>
+
+    <!-- System Tab -->
+    <section id="tab-system" class="tab-content">
+      <div class="system-grid">
+        <div id="system-health" class="card">
+          <div class="card-title">System Health</div>
+          <div class="card-body">Loading...</div>
+        </div>
+        <div id="network-info" class="card">
+          <div class="card-title">Network</div>
+          <div class="card-body">Loading...</div>
+        </div>
+        <div id="dhcp-leases" class="card">
+          <div class="card-title">DHCP Leases</div>
+          <div class="card-body">Loading...</div>
+        </div>
+        <div id="service-controls" class="card">
+          <div class="card-title">Services</div>
+          <div class="card-body">Loading...</div>
+        </div>
+      </div>
+    </section>
+
+  </main>
+
+  <!-- Add Camera Modal -->
+  <div id="modal-add-camera" class="modal hidden">
+    <div class="modal-overlay" onclick="closeModal('modal-add-camera')"></div>
+    <div class="modal-content">
+      <div class="modal-header">
+        <h2>Add Camera</h2>
+        <button class="modal-close" onclick="closeModal('modal-add-camera')">&times;</button>
+      </div>
+      <form id="add-camera-form">
+        <div class="form-group">
+          <label>Name *</label>
+          <input type="text" name="name" required placeholder="Front Door" />
+        </div>
+        <div class="form-group">
+          <label>IP Address *</label>
+          <input type="text" name="ip" required placeholder="192.168.1.100" />
+        </div>
+        <div class="form-group">
+          <label>RTSP URL (Main Stream) *</label>
+          <input type="text" name="rtsp_url" required placeholder="rtsp://user:pass@192.168.1.100:554/stream1" />
+        </div>
+        <div class="form-group">
+          <label>Sub Stream URL</label>
+          <input type="text" name="sub_stream_url" placeholder="rtsp://user:pass@192.168.1.100:554/stream2" />
+        </div>
+        <div class="form-group">
+          <label>Username</label>
+          <input type="text" name="username" placeholder="admin" />
+        </div>
+        <div class="form-group">
+          <label>Password</label>
+          <input type="password" name="password" />
+        </div>
+        <div class="form-group">
+          <label>Manufacturer</label>
+          <input type="text" name="manufacturer" placeholder="Generic" />
+        </div>
+        <div class="modal-actions">
+          <button type="button" class="btn" onclick="closeModal('modal-add-camera')">Cancel</button>
+          <button type="submit" class="btn btn-primary">Add Camera</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Discovery Results Modal -->
+  <div id="modal-discover" class="modal hidden">
+    <div class="modal-overlay" onclick="closeModal('modal-discover')"></div>
+    <div class="modal-content">
+      <div class="modal-header">
+        <h2>Discovery Results</h2>
+        <button class="modal-close" onclick="closeModal('modal-discover')">&times;</button>
+      </div>
+      <div id="discover-results">
+        <div class="loading">Scanning network...</div>
+      </div>
+      <div class="modal-actions">
+        <button type="button" class="btn" onclick="closeModal('modal-discover')">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
