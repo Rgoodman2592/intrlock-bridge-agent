@@ -9,6 +9,7 @@ const { startPeriodicCheck } = require('./updater');
 const { CommandPoller } = require('./poller');
 const { EinkDisplay } = require('./eink');
 const { CameraManager } = require('./camera');
+const { createDashboardServer } = require('./dashboard-server');
 
 async function main() {
   console.log('===========================================');
@@ -203,6 +204,9 @@ async function main() {
 
   console.log('[MAIN] Intrlock Bridge Agent running');
 
+  // Start dashboard web server
+  const dashboard = createDashboardServer(3000);
+
   // Graceful shutdown
   const shutdown = async () => {
     console.log('[MAIN] Shutting down...');
@@ -211,6 +215,8 @@ async function main() {
     health.stop();
     gpio.cleanup();
     await mqtt.disconnect();
+    dashboard.recording.cleanup();
+    dashboard.server.close();
     process.exit(0);
   };
 
