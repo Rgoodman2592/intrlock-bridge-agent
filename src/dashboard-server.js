@@ -160,6 +160,20 @@ function createDashboardServer(port = 3000) {
     console.log(`[DASHBOARD] http://0.0.0.0:${port}/dashboard`);
   });
 
+  // Regenerate MediaMTX config from cameras.json and reload
+  // (CameraManager may have written its own config on startup with just 'cam' path)
+  const cameras = cameraConfig.listCameras();
+  if (cameras.length > 0) {
+    cameraConfig.regenerateMediaMtx();
+    // Send HUP to MediaMTX to reload config without restart
+    try {
+      execSync('pkill -HUP mediamtx 2>/dev/null', { timeout: 3000 });
+      console.log('[DASHBOARD] MediaMTX config regenerated and reloaded');
+    } catch {
+      console.log('[DASHBOARD] MediaMTX config regenerated (reload signal failed — may need manual restart)');
+    }
+  }
+
   // Auto-start recordings for cameras with recording=true
   recording.startAll();
   recording.startRetentionLoop();
