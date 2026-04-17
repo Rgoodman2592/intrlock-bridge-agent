@@ -22,7 +22,9 @@ apt-get install -y -qq git curl jq qrencode ffmpeg
 
 if [ "$DEVICE_TYPE" = "panel" ]; then
   echo "📦 [2/7] Installing display packages..."
-  apt-get install -y -qq chromium-browser xserver-xorg 2>/dev/null || apt-get install -y -qq chromium xserver-xorg x11-xserver-utils xinit openbox unclutter pulseaudio alsa-utils libcamera-apps
+  apt-get install -y -qq xserver-xorg x11-xserver-utils xinit openbox unclutter pulseaudio alsa-utils libcamera-apps
+  # chromium-browser was renamed to chromium in modern Debian/Raspbian
+  apt-get install -y -qq chromium 2>/dev/null || apt-get install -y -qq chromium-browser 2>/dev/null || echo "⚠️  Chromium install failed — install manually: sudo apt install chromium"
 fi
 
 echo "📦 [3/7] Installing Node.js..."
@@ -126,7 +128,7 @@ HTML
   echo '/opt/intrlock-bridge/start-kiosk.sh &' > /etc/xdg/openbox/autostart
 
   KUSER=$(ls /home/ | head -1 || echo pi)
-  cat > /etc/systemd/system/intrlock-kiosk.service << 'KVC'
+  cat > /etc/systemd/system/intrlock-kiosk.service << KVC
 [Unit]
 Description=Intrlock Kiosk
 After=network-online.target
