@@ -22,7 +22,7 @@ apt-get install -y -qq git curl jq qrencode ffmpeg
 
 if [ "$DEVICE_TYPE" = "panel" ]; then
   echo "📦 [2/7] Installing display packages..."
-  apt-get install -y -qq chromium-browser xserver-xorg x11-xserver-utils xinit openbox unclutter pulseaudio alsa-utils libcamera-apps
+  apt-get install -y -qq chromium xserver-xorg x11-xserver-utils xinit openbox unclutter pulseaudio alsa-utils libcamera-apps
 fi
 
 echo "📦 [3/7] Installing Node.js..."
@@ -110,7 +110,7 @@ KURL=$(jq -r '.kiosk_url' "$CFG" 2>/dev/null)
 [ "$ACT" = "true" ] && [ -n "$KURL" ] && [ "$KURL" != "null" ] && URL="$KURL" || URL="file:///opt/intrlock-bridge/activation-page.html"
 xset s off; xset -dpms; xset s noblank
 unclutter -idle 3 -root &
-chromium-browser --kiosk --noerrdialogs --disable-infobars --disable-session-crashed-bubble --no-first-run --start-fullscreen --autoplay-policy=no-user-gesture-required --use-gl=egl "$URL"
+chromium --kiosk --noerrdialogs --disable-infobars --disable-session-crashed-bubble --no-first-run --start-fullscreen --autoplay-policy=no-user-gesture-required --use-gl=egl "$URL"
 KSK
   chmod +x "$INSTALL_DIR/start-kiosk.sh"
 
