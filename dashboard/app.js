@@ -527,6 +527,7 @@ async function loadSystem() {
   renderNetworkCard(data);
   renderDhcpCard(data);
   renderServicesCard(data);
+  loadActivationStatus();
 }
 
 function renderHealthCard(data) {
@@ -692,6 +693,87 @@ function formatUptime(seconds) {
   if (d > 0) return `${d}d ${h}h ${m}m`;
   if (h > 0) return `${h}h ${m}m`;
   return `${m}m`;
+}
+
+// ── ACTIVATION CODE ──
+let activationTimer = null;
+
+async function generateActivationCode() {
+  const btn = document.getElementById('btn-generate-code');
+  if (btn) btn.disabled = true;
+
+  const result = await api('/activation/generate', { method: 'POST' });
+
+  if (!result.ok) {
+    alert(result.message || 'Failed to generate code');
+    if (btn) btn.disabled = false;
+    return;
+  }
+
+  showActivationCode(result.code, result.expires_at);
+}
+
+function showActivationCode(code, expiresAt) {
+  const formatted = code.slice(0, 3) + ' – ' + code.slice(3);
+  const container = document.getElementById('activation-content');
+
+  container.innerHTML = `
+    <div class="activation-code-display">
+      <div class="activation-code">${formatted}</div>
+      <div class="activation-timer" id="activation-timer"></div>
+      <div class="activation-subtitle">Enter this code in the Intrlock dashboard to link this bridge's cameras</div>
+      <div class="activation-actions">
+        <button class="btn btn-sm" onclick="generateActivationCode()">Regenerate</button>
+      </div>
+    </div>
+  `;
+
+  if (activationTimer) clearInterval(activationTimer);
+  activationTimer = setInterval(() => {
+    const now = Date.now();
+    const remaining = Math.max(0, Math.floor((expiresAt - now) / 1000));
+    const minutes = Math.floor(remaining / 60);
+    const seconds = remaining % 60;
+    const timerEl = document.getElementById('activation-timer');
+
+    if (!timerEl) { clearInterval(activationTimer); return; }
+
+    timerEl.textContent = `Expires in ${minutes}:${String(seconds).padStart(2, '0')}`;
+    timerEl.className = 'activation-timer' +
+      (remaining <= 60 ? ' critical' : remaining <= 180 ? ' expiring' : '');
+
+    if (remaining <= 0) {
+      clearInterval(activationTimer);
+      resetActivationUI();
+    }
+  }, 1000);
+}
+
+function resetActivationUI() {
+  const container = document.getElementById('activation-content');
+  if (container) {
+    container.innerHTML = `
+      <p class="activation-hint">Generate a code to link this bridge's cameras to the Intrlock dashboard.</p>
+      <button id="btn-generate-code" class="btn btn-primary" onclick="generateActivationCode()">Generate Activation Code</button>
+    `;
+  }
+}
+
+async function loadActivationStatus() {
+  const status = await api('/activation/status');
+  if (status.active) {
+    const container = document.getElementById('activation-content');
+    container.innerHTML = `
+      <div class="activation-code-display">
+        <div class="activation-code">• • • – • • •</div>
+        <div class="activation-timer" id="activation-timer">Code active</div>
+        <div class="activation-subtitle">A code was generated in another session. Generate a new one to see it.</div>
+        <div class="activation-actions">
+          <button class="btn btn-sm btn-primary" onclick="generateActivationCode()">Generate New Code</button>
+        </div>
+      </div>
+    `;
+  }
 }
 
 // ---------------------------------------------------------------------------

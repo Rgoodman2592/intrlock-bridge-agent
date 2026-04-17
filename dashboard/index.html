@@ -102,6 +102,15 @@
     <!-- System Tab -->
     <section id="tab-system" class="tab-content">
       <div class="system-grid">
+        <div id="activation-card" class="card activation-card" style="grid-column: 1 / -1;">
+          <div class="card-title">Activation Code</div>
+          <div class="card-body">
+            <div id="activation-content">
+              <p class="activation-hint">Generate a code to link this bridge's cameras to the Intrlock dashboard.</p>
+              <button id="btn-generate-code" class="btn btn-primary" onclick="generateActivationCode()">Generate Activation Code</button>
+            </div>
+          </div>
+        </div>
         <div id="system-health" class="card">
           <div class="card-title">System Health</div>
           <div class="card-body">Loading...</div>
