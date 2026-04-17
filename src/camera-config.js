@@ -133,7 +133,6 @@ function regenerateMediaMtx(data) {
       paths += `    runOnInitRestart: yes\n`;
     } else {
       paths += `    source: ${cam.rtsp_url}\n`;
-      paths += `    sourceOnDemand: yes\n`;
     }
   }
 

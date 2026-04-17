@@ -94,6 +94,7 @@ async function loadLiveView() {
         allowfullscreen
         allow="autoplay"
         title="${escapeHtml(cam.name)}"
+        data-cam-id="${cam.id}"
       ></iframe>
       <button class="stream-fullscreen-btn" onclick="toggleFullscreen('cell-${cam.id}')" title="Fullscreen">&#x26F6;</button>
       <div class="stream-label">
@@ -104,6 +105,34 @@ async function loadLiveView() {
       </div>
     </div>
   `).join('');
+
+  // Auto-reload dropped streams every 15 seconds
+  startStreamHealthCheck();
+}
+
+let streamHealthInterval = null;
+function startStreamHealthCheck() {
+  if (streamHealthInterval) clearInterval(streamHealthInterval);
+  streamHealthInterval = setInterval(() => {
+    document.querySelectorAll('.stream-cell iframe').forEach(iframe => {
+      try {
+        // If iframe failed to load or has error content, reload it
+        const camId = iframe.dataset.camId;
+        if (!camId) return;
+        const doc = iframe.contentDocument || iframe.contentWindow?.document;
+        if (doc) {
+          const text = doc.body?.textContent || '';
+          if (text.includes('error') || text.includes('not configured') || text.trim() === '') {
+            const src = `http://${location.hostname}:8889/${camId}/`;
+            iframe.src = '';
+            setTimeout(() => { iframe.src = src; }, 100);
+          }
+        }
+      } catch (e) {
+        // Cross-origin — iframe loaded something, likely fine
+      }
+    });
+  }, 15000);
 }
 
 function toggleFullscreen(cellId) {

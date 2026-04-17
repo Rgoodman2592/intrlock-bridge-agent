@@ -67,12 +67,9 @@ async function main() {
   // Give camera access to MQTT for event publishing
   camera.mqtt = mqtt;
 
-  // Auto-start camera stream if camera was detected and auto_stream enabled
-  if (camDetected && cfg.camera_auto_start !== false) {
-    camera.start().then((urls) => {
-      if (urls) console.log('[MAIN] Camera stream auto-started');
-    }).catch((e) => console.error('[MAIN] Camera auto-start failed:', e.message));
-  }
+  // Camera streams are now managed by the dashboard server via cameras.json + MediaMTX config.
+  // CameraManager auto-start is disabled to avoid conflicts (double ffmpeg on /dev/video0).
+  // CameraManager is still available for MQTT stream commands if needed.
 
   // Handle incoming commands
   mqtt.onCommand(async (data) => {
