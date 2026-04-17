@@ -130,8 +130,7 @@ function regenerateMediaMtx(data) {
       // Pi Camera Module (CSI) — use native rpiCamera source
       paths += `    source: rpiCamera\n`;
     } else if (cam.ffmpeg_source) {
-      // USB webcam or other local device — use ffmpeg publisher
-      paths += `    source: publisher\n`;
+      // Local device (USB webcam, Pi camera via rpicam-vid) — run ffmpeg/rpicam command
       paths += `    runOnInit: ${cam.ffmpeg_source}\n`;
       paths += `    runOnInitRestart: yes\n`;
     } else {
