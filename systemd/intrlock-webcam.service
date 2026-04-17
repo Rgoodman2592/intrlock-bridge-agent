@@ -1,0 +1,14 @@
+[Unit]
+Description=Intrlock USB Webcam Stream
+After=intrlock-mediamtx.service
+Wants=intrlock-mediamtx.service
+
+[Service]
+Type=simple
+ExecStartPre=/bin/sleep 8
+ExecStart=/usr/bin/ffmpeg -f v4l2 -framerate 15 -video_size 1280x720 -input_format yuyv422 -i /dev/video0 -c:v libx264 -preset ultrafast -tune zerolatency -pix_fmt yuv420p -profile:v baseline -b:v 1500k -maxrate 1500k -bufsize 3000k -f rtsp rtsp://localhost:8554/webcam
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
