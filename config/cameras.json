@@ -32,7 +32,7 @@
       "ip": "",
       "rtsp_url": "",
       "sub_stream_url": "",
-      "rpi_camera": true,
+      "ffmpeg_source": "rpicam-vid -t 0 --width 1920 --height 1080 --framerate 15 --codec h264 --profile baseline --level 4 -o - 2>/dev/null | ffmpeg -f h264 -i - -c:v copy -f rtsp rtsp://localhost:8554/aicam",
       "username": "",
       "password": "",
       "manufacturer": "Raspberry Pi",
