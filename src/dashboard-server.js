@@ -6,6 +6,8 @@ const { StorageManager } = require('./storage-manager');
 const { RecordingManager } = require('./recording-manager');
 const { OnvifDiscovery } = require('./onvif');
 const systemInfo = require('./system-info');
+const { ActivationManager } = require('./activation');
+const config = require('./config');
 
 function createDashboardServer(port = 3000) {
   const app = express();
@@ -22,6 +24,8 @@ function createDashboardServer(port = 3000) {
   const storage = new StorageManager(settings.usb_mount_path);
   const recording = new RecordingManager(storage, cameraConfig);
   const onvif = new OnvifDiscovery();
+  const bridgeConfig = config.load();
+  const activation = new ActivationManager(bridgeConfig, cameraConfig);
 
   // ── Camera CRUD ──
 
@@ -155,6 +159,22 @@ function createDashboardServer(port = 3000) {
     res.json(systemInfo.restartService(req.params.service));
   });
 
+  // ── Activation ──
+
+  app.post('/api/activation/generate', (req, res) => {
+    res.json(activation.generate());
+  });
+
+  app.get('/api/activation/status', (req, res) => {
+    res.json(activation.getStatus());
+  });
+
+  app.post('/api/activation/validate', (req, res) => {
+    const { code } = req.body || {};
+    if (!code) return res.status(400).json({ valid: false, reason: 'missing code' });
+    res.json(activation.validate(code));
+  });
+
   // Start server
   const server = app.listen(port, '0.0.0.0', () => {
     console.log(`[DASHBOARD] http://0.0.0.0:${port}/dashboard`);
@@ -178,7 +198,7 @@ function createDashboardServer(port = 3000) {
   recording.startAll();
   recording.startRetentionLoop();
 
-  return { app, server, recording, storage };
+  return { app, server, recording, storage, activation };
 }
 
 module.exports = { createDashboardServer };
