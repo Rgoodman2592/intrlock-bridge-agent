@@ -1,6 +1,9 @@
 /**
  * Camera Auto-Discovery — finds, configures, and streams IP cameras automatically.
  *
+ * Supported brands: InViD, Turing, Dahua, Hikvision, LTS, Luma, Axis, Honeywell,
+ * Hanwha/Samsung, Amcrest, Uniview, Vivotek, Bosch, and generic ONVIF cameras.
+ *
  * Flow:
  *   1. Scan eth0 for cameras via ARP broadcast + tcpdump for link-local devices
  *   2. Try ONVIF discovery + common RTSP URL patterns
@@ -21,28 +24,70 @@ const CAMERA_IFACE = 'eth0';
 const MEDIAMTX_CONFIG = '/tmp/mediamtx.yml';
 const MEDIAMTX_BIN = '/opt/mediamtx/mediamtx';
 
-// Common default credentials for IP cameras
+// Common default credentials for IP cameras — ordered by frequency
 const DEFAULT_CREDS = [
+  // Dahua OEM: InViD, Turing, Amcrest, Lorex
   { user: 'admin', pass: '123456' },
   { user: 'admin', pass: 'admin' },
-  { user: 'admin', pass: '' },
-  { user: 'admin', pass: 'admin123' },
+  // Hikvision OEM: LTS, Luma, Laview, Annke
   { user: 'admin', pass: '12345' },
+  { user: 'admin', pass: 'admin123' },
+  // Axis
   { user: 'root', pass: 'root' },
+  { user: 'root', pass: 'pass' },
+  { user: 'root', pass: '' },
+  // Honeywell
+  { user: 'admin', pass: '1234' },
   { user: 'admin', pass: 'password' },
+  // Hanwha/Samsung
+  { user: 'admin', pass: '4321' },
+  { user: 'admin', pass: '' },
+  // Vivotek
+  { user: 'root', pass: 'admin' },
+  // Bosch
+  { user: 'service', pass: '' },
+  // Generic fallbacks
+  { user: 'admin', pass: 'admin1' },
+  { user: 'user', pass: 'user' },
 ];
 
 // Common RTSP URL patterns by manufacturer
 const RTSP_PATHS = [
-  '/',                                           // Dahua/InViD default
-  '/cam/realmonitor?channel=1&subtype=0',        // Dahua main stream
-  '/cam/realmonitor?channel=1&subtype=1',        // Dahua sub stream
+  // Dahua OEM (InViD, Turing, Amcrest, Lorex)
+  '/',
+  '/cam/realmonitor?channel=1&subtype=0',       // Dahua main stream
+  '/cam/realmonitor?channel=1&subtype=1',       // Dahua sub stream
+  // Hikvision OEM (LTS, Luma, Laview, Annke)
   '/Streaming/Channels/101',                     // Hikvision main
   '/Streaming/Channels/102',                     // Hikvision sub
-  '/stream1',                                    // Generic
-  '/live',                                       // Generic
-  '/h264Preview_01_main',                        // Amcrest
-  '/live/ch00_1',                                // Uniview
+  '/ISAPI/Streaming/channels/101',               // Hikvision ISAPI
+  // Axis
+  '/axis-media/media.amp',                       // Axis main
+  '/axis-media/media.amp?videocodec=h264',       // Axis H.264
+  // Honeywell
+  '/VideoInput/1/h264/1',                        // Honeywell Performance
+  '/h264',                                       // Honeywell Equip
+  // Hanwha/Samsung (Wisenet)
+  '/profile2/media.smp',                         // Hanwha main
+  '/profile1/media.smp',                         // Hanwha sub
+  // Amcrest
+  '/h264Preview_01_main',
+  '/h264Preview_01_sub',
+  // Uniview
+  '/live/ch00_1',
+  '/live/ch00_0',
+  // Vivotek
+  '/live.sdp',
+  // Bosch
+  '/video1',
+  '/rtsp_tunnel',
+  // Generic
+  '/stream1',
+  '/stream',
+  '/live',
+  '/media/video1',
+  '/1',
+  '/ch0_0.h264',
 ];
 
 class CameraDiscovery {
@@ -209,7 +254,7 @@ class CameraDiscovery {
       ip: c.ip,
       mac: c.mac,
       streamId: c.streamId,
-      rtspUrl: c.rtspUrl ? c.rtspUrl.replace(/\/\/[^@]+@/, '//***:***@') : null, // hide creds
+      rtspUrl: c.rtspUrl ? c.rtspUrl.replace(/\/\/[^@]+@/, '//***:***@') : null,
       status: 'configured',
     }));
   }
@@ -218,18 +263,15 @@ class CameraDiscovery {
 
   _setupInterface() {
     try {
-      // Add camera subnet IP to eth0 if not already set
       const addrs = execSync(`ip addr show ${CAMERA_IFACE} 2>/dev/null`, { encoding: 'utf8' });
       if (!addrs.includes(BRIDGE_IP)) {
         execSync(`sudo ip addr add ${BRIDGE_IP}/24 dev ${CAMERA_IFACE} 2>/dev/null`);
         execSync(`sudo ip link set ${CAMERA_IFACE} up`);
         console.log(`[DISCOVERY] Set ${CAMERA_IFACE} to ${BRIDGE_IP}`);
       }
-      // Also add link-local range for uninitialized cameras
       if (!addrs.includes('169.254.')) {
         execSync(`sudo ip addr add 169.254.1.1/16 dev ${CAMERA_IFACE} 2>/dev/null`);
       }
-      // Make sure default route stays on WiFi
       try {
         execSync(`sudo ip route del default dev ${CAMERA_IFACE} 2>/dev/null`);
       } catch (e) { /* no default route on eth0, good */ }
@@ -249,7 +291,6 @@ class CameraDiscovery {
         proc.stdout.on('data', d => output += d.toString());
         proc.stderr.on('data', d => output += d.toString());
         proc.on('close', () => {
-          // Parse ARP requests for 169.254.x.x addresses
           const matches = output.matchAll(/who-has\s+(169\.254\.\d+\.\d+)/g);
           const seen = new Set();
           for (const m of matches) {
@@ -259,7 +300,6 @@ class CameraDiscovery {
               devices.push({ ip, mac: '', name: '' });
             }
           }
-          // Also check ARP replies
           const replies = output.matchAll(/(169\.254\.\d+\.\d+)\s+is-at\s+([0-9a-f:]+)/gi);
           for (const m of replies) {
             if (!seen.has(m[1])) {
@@ -377,11 +417,6 @@ class CameraDiscovery {
 
   async _testRtsp(url) {
     try {
-      execSync(
-        `timeout 5 ffprobe -v quiet -print_format json -show_streams "${url}" 2>&1`,
-        { encoding: 'utf8', timeout: 8000 }
-      );
-      // If ffprobe returns without error and has stream data, it works
       const result = execSync(
         `timeout 5 ffprobe -v quiet -print_format json -show_streams "${url}" 2>/dev/null`,
         { encoding: 'utf8', timeout: 8000 }
@@ -414,7 +449,7 @@ class CameraDiscovery {
   }
 
   async _setCameraIp(cam, newIp) {
-    // Try Dahua API to set static IP
+    // Try Dahua API (InViD, Turing, Amcrest, Lorex)
     try {
       const body = `table.Network.eth0.IPAddress=${newIp}&table.Network.eth0.SubnetMask=255.255.255.0&table.Network.eth0.DefaultGateway=${BRIDGE_IP}`;
       const res = await this._httpRequest(
@@ -424,20 +459,35 @@ class CameraDiscovery {
       );
       if (res.includes('OK')) {
         console.log(`[DISCOVERY] Camera IP changed to ${newIp} via Dahua API`);
-        // Wait for camera to come up on new IP
         await new Promise(r => setTimeout(r, 5000));
         return true;
       }
-    } catch (e) { /* not Dahua, try ONVIF */ }
+    } catch (e) { /* not Dahua */ }
+
+    // Try Hikvision API (LTS, Luma)
+    try {
+      const xml = `<?xml version="1.0" encoding="UTF-8"?><NetworkInterface><IPAddress><ipVersion>v4</ipVersion><addressingType>static</addressingType><ipAddress>${newIp}</ipAddress><subnetMask>255.255.255.0</subnetMask><DefaultGateway><ipAddress>${BRIDGE_IP}</ipAddress></DefaultGateway></IPAddress></NetworkInterface>`;
+      const res = await this._httpRequestPost(
+        cam.ip, 80,
+        '/ISAPI/System/Network/interfaces/1',
+        xml,
+        cam.username, cam.password
+      );
+      if (res.includes('OK') || res.includes('200')) {
+        console.log(`[DISCOVERY] Camera IP changed to ${newIp} via Hikvision API`);
+        await new Promise(r => setTimeout(r, 5000));
+        return true;
+      }
+    } catch (e) { /* not Hikvision */ }
 
     console.log(`[DISCOVERY] Could not auto-assign IP. Camera stays at ${cam.ip}`);
     return false;
   }
 
-  _httpRequest(host, port, path, username, password) {
+  _httpRequest(host, port, reqPath, username, password) {
     return new Promise((resolve, reject) => {
       const options = {
-        hostname: host, port, path, method: 'GET',
+        hostname: host, port, path: reqPath, method: 'GET',
         headers: username ? { 'Authorization': 'Basic ' + Buffer.from(`${username}:${password}`).toString('base64') } : {},
         timeout: 5000,
       };
@@ -448,6 +498,29 @@ class CameraDiscovery {
       });
       req.on('error', reject);
       req.on('timeout', () => { req.destroy(); reject(new Error('Timeout')); });
+      req.end();
+    });
+  }
+
+  _httpRequestPost(host, port, reqPath, body, username, password) {
+    return new Promise((resolve, reject) => {
+      const options = {
+        hostname: host, port, path: reqPath, method: 'PUT',
+        headers: {
+          'Content-Type': 'application/xml',
+          'Content-Length': Buffer.byteLength(body),
+          'Authorization': 'Basic ' + Buffer.from(`${username}:${password}`).toString('base64'),
+        },
+        timeout: 5000,
+      };
+      const req = http.request(options, (res) => {
+        let data = '';
+        res.on('data', chunk => data += chunk);
+        res.on('end', () => resolve(data));
+      });
+      req.on('error', reject);
+      req.on('timeout', () => { req.destroy(); reject(new Error('Timeout')); });
+      req.write(body);
       req.end();
     });
   }
@@ -483,7 +556,6 @@ class CameraDiscovery {
   _updateMediaMTX() {
     if (this.cameras.length === 0) return;
 
-    // Build MediaMTX config
     let yml = 'webrtcAddress: :8889\n';
     yml += 'hlsAddress: :8888\n';
     yml += 'rtspAddress: :8554\n';
@@ -499,8 +571,6 @@ class CameraDiscovery {
 
     fs.writeFileSync(MEDIAMTX_CONFIG, yml);
     console.log('[DISCOVERY] MediaMTX config updated');
-
-    // Restart MediaMTX
     this._restartMediaMTX();
   }
 
